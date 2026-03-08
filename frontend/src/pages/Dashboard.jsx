@@ -3,6 +3,11 @@ import axios from "axios";
 import Sidebar from "../components/Sidebar";
 import Navbar from "../components/Navbar";
 
+// Aapke alag files wale components
+import VideoUploader from "../components/VideoUploader";
+import ResultGraph from "../components/ResultGraph";
+import HeatmapOverlay from "../components/HeatmapOverlay";
+
 const Dashboard = () => {
     const [file, setFile] = useState(null);
     const [previewUrl, setPreviewUrl] = useState(null);
@@ -15,29 +20,16 @@ const Dashboard = () => {
         if (savedName) setUserName(savedName);
     }, []);
 
-    const handleFileChange = (e) => {
-        const selectedFile = e.target.files[0];
-        if (selectedFile) {
-            setFile(selectedFile);
-            setPreviewUrl(URL.createObjectURL(selectedFile));
-            setResult(null);
-        }
-    };
-
     const handleUpload = async () => {
         if (!file) return alert("⚠️ Select evidence first!");
-
-        const userID = localStorage.getItem("user_id") || 1;
+        
+        setLoading(true);
         const formData = new FormData();
         formData.append("file", file);
-        formData.append("user_id", userID);
+        formData.append("user_id", localStorage.getItem("user_id") || 1);
 
-        setLoading(true);
         try {
-            const response = await axios.post(
-                "http://127.0.0.1:8000/api/analyze",
-                formData
-            );
+            const response = await axios.post("http://127.0.0.1:8000/api/analyze", formData);
             setResult(response.data);
         } catch (error) {
             alert("❌ System Error: Forensic Engine Offline.");
@@ -46,10 +38,12 @@ const Dashboard = () => {
         }
     };
 
+    // Dummy data taake graph hamesha bhara hua nazar aaye
+    const dummyScores = { spatial: 88, physics: 45, forensics: 72, audio: 91 };
+
     return (
         <div style={styles.pageWrapper}>
             <Sidebar />
-
             <div style={styles.mainArea}>
                 <Navbar />
 
@@ -57,416 +51,109 @@ const Dashboard = () => {
                     <header style={styles.welcomeHeader}>
                         <div>
                             <h1 style={styles.mainTitle}>Forensic Intelligence Console</h1>
-                            <p style={styles.subTitle}>
-                                Active Subject:{" "}
-                                <span style={{ color: "#38bdf8" }}>{userName}</span>
-                            </p>
+                            <p style={styles.subTitle}>Active Subject: <span style={{ color: "#38bdf8" }}>{userName}</span></p>
                         </div>
                         <div style={styles.liveBadge}>● ENGINE ONLINE</div>
                     </header>
 
-                    {/* Upload Section */}
-                    <div style={styles.uploadTerminal}>
-                        {!previewUrl ? (
-                            <div style={styles.dropZone}>
-                                <div style={{ fontSize: "55px" }}>📡</div>
-                                <h3 style={{ color: "#f8fafc", marginTop: "10px" }}>
-                                    Inject Evidence Stream
-                                </h3>
-                                <label style={styles.fileButton}>
-                                    SELECT SOURCE
-                                    <input
-                                        type="file"
-                                        onChange={handleFileChange}
-                                        style={{ display: "none" }}
-                                    />
-                                </label>
+                    <div style={styles.contentGrid}>
+                        
+                        {/* LEFT COLUMN: Uploader & Heatmap */}
+                        <div style={styles.inputColumn}>
+                            
+                            {/* 1. Uploader (Hamesha dikhega) */}
+                            <div style={styles.videoBox}>
+                                <VideoUploader file={file} setFile={setFile} setPreviewUrl={setPreviewUrl} setResult={setResult} />
                             </div>
-                        ) : (
-                            <div style={styles.previewContainer}>
-                                <div style={styles.videoHeader}>
-                                    EVIDENCE_PLAYBACK_MODULE
-                                </div>
-                                <video
-                                    src={previewUrl}
-                                    controls
-                                    style={styles.videoElement}
+
+                            {/* 2. Heatmap Overlay (Hamesha dikhega test karne ke liye) */}
+                            <div style={{...styles.videoBox, marginTop: '20px'}}>
+                                <HeatmapOverlay 
+                                    previewUrl={previewUrl || "https://www.w3schools.com/html/mov_bbb.mp4"} 
+                                    isScanning={loading} 
+                                    verdict={result ? result.verdict : "FAKE"} 
                                 />
-                                <button
-                                    onClick={() => {
-                                        setFile(null);
-                                        setPreviewUrl(null);
-                                    }}
-                                    style={styles.changeBtn}
-                                >
-                                    CHANGE SOURCE
-                                </button>
                             </div>
-                        )}
 
-                        <button
-                            onClick={handleUpload}
-                            disabled={loading || !file}
-                            style={styles.scanBtn(loading || !file)}
-                            className={loading ? "pulse-glow" : ""}
-                        >
-                            {loading
-                                ? "EXTRACTING SIGNAL MATRICES..."
-                                : "INITIATE DEEP SCAN"}
-                        </button>
-                    </div>
+                            <button onClick={handleUpload} disabled={loading} style={styles.scanBtn(loading)}>
+                                {loading ? "EXTRACTING SIGNALS..." : "INITIATE DEEP SCAN"}
+                            </button>
+                        </div>
 
-                    {/* Results */}
-                    {result && (
-                        <div style={{ marginTop: "50px", animation: "slideUp 0.6s ease" }}>
-                            <div style={styles.verdictPanel(result.verdict)}>
-                                <h1 style={styles.verdictText}>
-                                    {result.verdict}
+                        {/* RIGHT COLUMN: Results & Graphs (Hamesha dikhega) */}
+                        <div style={styles.resultsColumn}>
+                            <div style={styles.verdictPanel(result ? result.verdict : "FAKE")}>
+                                <h1 style={{margin: 0, fontSize: '3.5rem', fontWeight: 900, letterSpacing: '-2px'}}>
+                                    {result ? result.verdict : "FAKE"}
                                 </h1>
-                                <p>
-                                    CONFIDENCE INDEX:{" "}
-                                    <b>{result.confidence}%</b>
+                                <p style={{letterSpacing: '2px', fontSize: '13px', opacity: 0.8, marginTop: '10px'}}>
+                                    CONFIDENCE INDEX: <b style={{fontSize: '16px', color: '#fff'}}>{result ? result.confidence : "94.5"}%</b>
                                 </p>
                             </div>
 
-                            <div style={styles.resultsGrid}>
-                                <div style={styles.liveViewCard}>
-                                    <div style={styles.scannerLine}></div>
-                                    <video
-                                        src={previewUrl}
-                                        autoPlay
-                                        loop
-                                        muted
-                                        style={styles.miniVideo}
-                                    />
-                                    <div style={styles.overlayText}>
-                                        SCANNING_SIGNAL_HASH...
-                                    </div>
-                                </div>
-
-                                <div style={styles.metricsContainer}>
-                                    <h4 style={styles.metricsTitle}>
-                                        SIGNAL DIAGNOSTICS
-                                    </h4>
-                                    <MetricBar
-                                        label="Spatial Consistency"
-                                        score={result.branch_scores?.spatial || 0}
-                                    />
-                                    <MetricBar
-                                        label="Physical Integrity"
-                                        score={result.branch_scores?.physics || 0}
-                                    />
-                                    <MetricBar
-                                        label="Digital Forensics"
-                                        score={result.branch_scores?.forensics || 0}
-                                    />
-                                    <MetricBar
-                                        label="Audio Biometrics"
-                                        score={result.branch_scores?.audio || 0}
-                                    />
-                                </div>
+                            <div style={{ marginTop: "25px" }}>
+                                {/* 3. Result Graph (Hamesha dikhega) */}
+                                <ResultGraph scores={result ? result.branch_scores : dummyScores} />
                             </div>
                         </div>
-                    )}
+
+                    </div>
                 </div>
             </div>
 
             <style>{`
-                @keyframes slideUp {
-                    from { transform: translateY(40px); opacity: 0; }
-                    to { transform: translateY(0); opacity: 1; }
-                }
-
-                @keyframes scan {
-                    0% { top: 0; }
-                    100% { top: 100%; }
-                }
-
-                .pulse-glow {
-                    animation: glowAnim 1.5s infinite;
-                }
-
-                @keyframes glowAnim {
-                    0% { box-shadow: 0 0 0 0 rgba(56,189,248,0.5); }
-                    70% { box-shadow: 0 0 0 20px rgba(56,189,248,0); }
-                    100% { box-shadow: 0 0 0 0 rgba(56,189,248,0); }
-                }
-
                 body::before {
-                    content: "";
-                    position: fixed;
-                    width: 100%;
-                    height: 100%;
-                    background-image:
-                        linear-gradient(rgba(56,189,248,0.03) 1px, transparent 1px),
-                        linear-gradient(90deg, rgba(56,189,248,0.03) 1px, transparent 1px);
-                    background-size: 60px 60px;
-                    pointer-events: none;
-                    z-index: 0;
+                    content: ""; position: fixed; width: 100%; height: 100%;
+                    background-image: linear-gradient(rgba(56,189,248,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(56,189,248,0.03) 1px, transparent 1px);
+                    background-size: 50px 50px; pointer-events: none; z-index: 0;
                 }
             `}</style>
         </div>
     );
 };
 
-const MetricBar = ({ label, score }) => (
-    <div style={{ marginBottom: "20px" }}>
-        <div
-            style={{
-                display: "flex",
-                justifyContent: "space-between",
-                marginBottom: "6px",
-            }}
-        >
-            <span style={{ fontSize: "12px", color: "#94a3b8" }}>
-                {label}
-            </span>
-            <span
-                style={{
-                    fontSize: "12px",
-                    color: "#f8fafc",
-                    fontWeight: "bold",
-                }}
-            >
-                {score}%
-            </span>
-        </div>
-
-        <div
-            style={{
-                height: "6px",
-                backgroundColor: "#0f172a",
-                borderRadius: "3px",
-                border: "1px solid #1e293b",
-            }}
-        >
-            <div
-                style={{
-                    height: "100%",
-                    width: `${score}%`,
-                    background:
-                        score > 75
-                            ? "linear-gradient(90deg,#ef4444,#b91c1c)"
-                            : "linear-gradient(90deg,#38bdf8,#0ea5e9)",
-                    borderRadius: "3px",
-                    transition:
-                        "width 1.2s cubic-bezier(.17,.67,.83,.67)",
-                }}
-            ></div>
-        </div>
-    </div>
-);
-
 const styles = {
-    pageWrapper: {
-        display: "flex",
-        height: "100vh",
-        backgroundColor: "#000814",
-        overflow: "hidden",
+    pageWrapper: { display: "flex", height: "100vh", backgroundColor: "#000814", overflow: "hidden", fontFamily: "'Inter', sans-serif" },
+    mainArea: { flex: 1, marginLeft: "260px", display: "flex", flexDirection: "column", overflowY: "auto", background: "radial-gradient(circle at 50% 0%, rgba(15,23,42,1) 0%, rgba(0,8,20,1) 100%)" },
+    contentPadding: { padding: "40px 50px", maxWidth: "1300px", margin: "0 auto", width: "100%" },
+    
+    welcomeHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "40px" },
+    mainTitle: { margin: 0, color: "#f8fafc", fontSize: "2rem", fontWeight: "800", letterSpacing: "-1px" },
+    subTitle: { color: "#64748b", fontSize: "13px", marginTop: "5px" },
+    liveBadge: { padding: "8px 15px", backgroundColor: "rgba(16, 185, 129, 0.1)", color: "#10b981", borderRadius: "20px", fontSize: "11px", fontWeight: "bold", border: "1px solid rgba(16, 185, 129, 0.3)" },
+    
+    // Grid Setup
+    contentGrid: {
+        display: "grid",
+        gridTemplateColumns: "400px 1fr", 
+        gap: "40px",
+        alignItems: "start"
     },
 
-    mainArea: {
-        flex: 1,
-        marginLeft: "260px",
-        display: "flex",
-        flexDirection: "column",
-        overflowY: "auto",
-        background: `
-            radial-gradient(circle at 20% 30%, rgba(56,189,248,0.08), transparent 40%),
-            radial-gradient(circle at 80% 70%, rgba(16,185,129,0.06), transparent 40%),
-            linear-gradient(180deg, #020617 0%, #000814 100%)
-        `,
+    inputColumn: { display: "flex", flexDirection: "column", gap: "10px" },
+    
+    videoBox: { 
+        width: "100%", height: "300px", borderRadius: "20px", overflow: "hidden",
+        backgroundColor: "rgba(15, 23, 42, 0.5)", border: "1px solid rgba(56, 189, 248, 0.15)",
+        boxShadow: "0 15px 35px rgba(0,0,0,0.5)", position: 'relative'
     },
 
-    contentPadding: { padding: "50px" },
-
-    welcomeHeader: {
-        display: "flex",
-        justifyContent: "space-between",
-        marginBottom: "50px",
-    },
-
-    mainTitle: {
-        margin: 0,
-        color: "#f8fafc",
-        fontSize: "2.3rem",
-        fontWeight: "800",
-    },
-
-    subTitle: { color: "#64748b", fontSize: "13px" },
-
-    liveBadge: {
-        padding: "8px 18px",
-        backgroundColor: "rgba(6, 78, 59, 0.3)",
-        color: "#10b981",
-        borderRadius: "30px",
-        fontSize: "11px",
-        fontWeight: "bold",
-        border: "1px solid rgba(16, 185, 129, 0.2)",
-    },
-
-    uploadTerminal: {
-        background: "rgba(15, 23, 42, 0.6)",
-        padding: "35px",
-        borderRadius: "28px",
-        border: "1px solid rgba(56, 189, 248, 0.15)",
-        backdropFilter: "blur(18px)",
-        boxShadow: "0 0 40px rgba(56,189,248,0.08)",
-    },
-
-    dropZone: {
-        border: "2px dashed #334155",
-        padding: "50px",
-        textAlign: "center",
-        borderRadius: "20px",
-        backgroundColor: "rgba(15, 23, 42, 0.4)",
-    },
-
-    fileButton: {
-        backgroundColor: "#38bdf8",
-        color: "#001018",
-        padding: "12px 25px",
-        borderRadius: "8px",
-        fontWeight: "800",
-        fontSize: "11px",
-        cursor: "pointer",
-        display: "inline-block",
-        marginTop: "20px",
-    },
-
-    previewContainer: {
-        textAlign: "center",
-        backgroundColor: "#000",
-        borderRadius: "20px",
-        padding: "15px",
-        border: "1px solid #334155",
-    },
-
-    videoHeader: {
-        color: "#38bdf8",
-        fontSize: "11px",
-        letterSpacing: "2px",
-        marginBottom: "12px",
-        textAlign: "left",
-    },
-
-    videoElement: {
-        width: "100%",
-        maxHeight: "320px",
-        borderRadius: "10px",
-    },
-
-    changeBtn: {
-        marginTop: "10px",
-        backgroundColor: "transparent",
-        color: "#64748b",
-        border: "none",
-        cursor: "pointer",
-        fontSize: "11px",
-        textDecoration: "underline",
-    },
+    resultsColumn: { display: "flex", flexDirection: "column", gap: "25px" },
 
     scanBtn: (disabled) => ({
-        width: "100%",
-        padding: "18px",
-        borderRadius: "14px",
-        border: disabled ? "1px solid #1e293b" : "1px solid #38bdf8",
-        fontSize: "14px",
-        fontWeight: "900",
-        letterSpacing: "1px",
-        background: disabled
-            ? "#0f172a"
-            : "linear-gradient(90deg, #38bdf8 0%, #0ea5e9 100%)",
-        color: disabled ? "#334155" : "#001018",
-        cursor: disabled ? "not-allowed" : "pointer",
-        marginTop: "25px",
-        transition: "all 0.3s ease",
-        boxShadow: disabled
-            ? "none"
-            : "0 0 25px rgba(56,189,248,0.3)",
+        width: "100%", padding: "18px", borderRadius: "14px", border: disabled ? "1px solid #1e293b" : "none",
+        fontSize: "14px", fontWeight: "900", letterSpacing: "2px",
+        background: disabled ? "#0f172a" : "linear-gradient(90deg, #38bdf8 0%, #2563eb 100%)",
+        color: disabled ? "#475569" : "#ffffff", cursor: disabled ? "not-allowed" : "pointer",
+        transition: "all 0.3s ease", marginTop: "15px"
     }),
 
     verdictPanel: (verdict) => ({
-        padding: "40px",
-        borderRadius: "28px",
-        textAlign: "center",
-        color: "white",
-        background:
-            verdict === "FAKE"
-                ? "linear-gradient(135deg, rgba(127,29,29,0.9), rgba(69,10,10,0.95))"
-                : "linear-gradient(135deg, rgba(6,78,59,0.9), rgba(2,44,34,0.95))",
-        border: `1px solid ${
-            verdict === "FAKE"
-                ? "rgba(239,68,68,0.6)"
-                : "rgba(16,185,129,0.6)"
-        }`,
-        boxShadow:
-            verdict === "FAKE"
-                ? "0 0 40px rgba(239,68,68,0.25)"
-                : "0 0 40px rgba(16,185,129,0.25)",
-    }),
-
-    verdictText: {
-        margin: 0,
-        fontSize: "3.8rem",
-        fontWeight: "900",
-    },
-
-    resultsGrid: {
-        display: "grid",
-        gridTemplateColumns: "1.2fr 1fr",
-        gap: "30px",
-        marginTop: "30px",
-    },
-
-    liveViewCard: {
-        position: "relative",
-        backgroundColor: "#000",
-        borderRadius: "28px",
-        overflow: "hidden",
-        border: "1px solid #38bdf844",
-    },
-
-    miniVideo: {
-        width: "100%",
-        height: "100%",
-        objectFit: "cover",
-        opacity: 0.6,
-    },
-
-    scannerLine: {
-        position: "absolute",
-        width: "100%",
-        height: "2px",
-        background: "#38bdf8",
-        boxShadow: "0 0 15px #38bdf8",
-        zIndex: 10,
-        animation: "scan 2s linear infinite",
-    },
-
-    overlayText: {
-        position: "absolute",
-        bottom: "15px",
-        left: "15px",
-        color: "#38bdf8",
-        fontSize: "10px",
-        fontFamily: "monospace",
-    },
-
-    metricsContainer: {
-        padding: "35px",
-        background: "rgba(2, 6, 23, 0.8)",
-        borderRadius: "28px",
-        border: "1px solid rgba(56,189,248,0.08)",
-        boxShadow: "inset 0 0 20px rgba(56,189,248,0.05)",
-    },
-
-    metricsTitle: {
-        color: "#38bdf8",
-        fontSize: "12px",
-        marginBottom: "25px",
-        letterSpacing: "1px",
-    },
+        padding: "35px", borderRadius: "24px", textAlign: "center", color: "white",
+        background: verdict === "FAKE" ? "linear-gradient(135deg, #7f1d1d, #450a0a)" : "linear-gradient(135deg, #064e3b, #022c22)",
+        border: `1px solid ${verdict === "FAKE" ? "#ef4444" : "#10b981"}`,
+        boxShadow: verdict === "FAKE" ? "0 20px 40px rgba(239,68,68,0.3)" : "0 20px 40px rgba(16,185,129,0.3)"
+    })
 };
 
 export default Dashboard;

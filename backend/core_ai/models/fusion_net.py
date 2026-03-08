@@ -1,38 +1,50 @@
 import torch
 import torch.nn as nn
-from .branch_a_spatial import BranchA_TimeSformer
-from .branch_b_physics import BranchB_PhysicsMotion
-from .branch_c_forensics import BranchC_DigitalForensics
-from .branch_d_audio import BranchD_Audio
+
+# Charon experts ko import karna (jo files aapne abhi banayi hain)
+from .branch_a_spatial import VisualExpert
+from .branch_b_physics import PhysicsExpert
+from .branch_c_forensics import ForensicExpert
+from .branch_d_audio import AudioExpert
 
 class DeepGuardFusionModel(nn.Module):
-    def __init__(self):
+    def __init__(self, embed_dim=256):
         super(DeepGuardFusionModel, self).__init__()
-        self.branch_a = BranchA_TimeSformer()
-        self.branch_b = BranchB_PhysicsMotion()
-        self.branch_c = BranchC_DigitalForensics()
-        self.branch_d = BranchD_Audio()
         
-        self.fusion_dim = 2816
+        # 1. Charon Experts ko initialize karna
+        self.visual_expert = VisualExpert(embed_dim=embed_dim)
+        self.physics_expert = PhysicsExpert(embed_dim=embed_dim)
+        self.forensic_expert = ForensicExpert(embed_dim=embed_dim)
+        self.audio_expert = AudioExpert(embed_dim=embed_dim)
         
-        self.classifier = nn.Sequential(
-            nn.Linear(self.fusion_dim, 1024),
-            nn.BatchNorm1d(1024),
+        # 2. LATE FUSION MLP (The Decision Maker)
+        # Charon models ka data mil kar (256 * 4 = 1024) features banayega
+        self.fusion_mlp = nn.Sequential(
+            nn.Linear(embed_dim * 4, 512),
             nn.ReLU(),
-            nn.Dropout(0.4),
-            nn.Linear(1024, 512),
-            nn.BatchNorm1d(512),
+            nn.Dropout(0.4),  # Overfitting rokne ke liye
+            
+            nn.Linear(512, 128),
             nn.ReLU(),
-            nn.Dropout(0.4),
-            nn.Linear(512, 1),
-            nn.Sigmoid()
+            
+            nn.Linear(128, 1) # Final Output: 1 score (Real ya Fake)
         )
 
-    def forward(self, video_rgb, flow_frames, forensics_frames, audio_input):
-        feat_a = self.branch_a(video_rgb)
-        feat_b = self.branch_b(flow_frames)
-        feat_c = self.branch_c(forensics_frames)
-        feat_d = self.branch_d(audio_input)
+    def forward(self, video_frames, optical_flow, fft_images, audio_waveforms):
+        """
+        Ye function charon inputs ek sath leta hai aur final result deta hai.
+        """
+        # Step 1: Har expert se feature vector nikalwana
+        vis_feat = self.visual_expert(video_frames)
+        phys_feat = self.physics_expert(optical_flow)
+        for_feat = self.forensic_expert(fft_images)
+        aud_feat = self.audio_expert(audio_waveforms)
         
-        fused_features = torch.cat((feat_a, feat_b, feat_c, feat_d), dim=1)
-        return self.classifier(fused_features)
+        # Step 2: Sab ko jorna (Concatenation / Late Fusion)
+        # Dim 1 par jor rahe hain (Batch size same rahega)
+        fused_features = torch.cat((vis_feat, phys_feat, for_feat, aud_feat), dim=1)
+        
+        # Step 3: Final Faisla (MLP)
+        output_logit = self.fusion_mlp(fused_features)
+        
+        return output_logit

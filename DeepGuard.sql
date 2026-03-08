@@ -101,3 +101,6 @@ VALUES ('Super Admin', 'admin@deepguard.com', 'admin123', 'admin', 1, 5);
 INSERT INTO GovernancePolicies (policy_title, min_confidence_threshold, alert_action)
 VALUES ('Standard Deepfake Detection Policy', 85.0, 'MANDATORY_VERIFICATION');
 GO
+
+select*
+from dbo.AnalysisHistory

@@ -2,20 +2,23 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from sqlalchemy.orm import Session
 import shutil
 import os
-import time
 import bcrypt
 from datetime import datetime
 
-# Database aur Models
-from .database import get_db
-from . import models
+# ==========================================
+# 🔗 IMPORTS FROM OTHER FILES
+# ==========================================
+from .database import get_db  # File 1 se database connection mangwaya
+from . import models          # Models file (jahan tables define hain)
 
 # AI Pipeline
 from core_ai.inference_pipeline import analyze_video
 
 router = APIRouter()
 
+# Uploads folder automatically ban banane ka logic
 UPLOAD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../storage/uploads/"))
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ==========================================
 # 1. AUTHENTICATION (Login & Signup)
@@ -27,11 +30,10 @@ def login_user(login_data: dict, db: Session = Depends(get_db)):
     if not user or not bcrypt.checkpw(login_data['password'].encode('utf-8'), user.password_hash.encode('utf-8')):
         raise HTTPException(status_code=401, detail="Access Denied: Invalid Identity.")
     
-    # Ye role frontend decide karega ke kya dikhana hai
     return {
         "user_id": user.user_id, 
         "full_name": user.full_name, 
-        "role": user.role # 'admin' ya 'operator'
+        "role": user.role 
     }
 
 @router.post("/api/signup")
@@ -55,7 +57,6 @@ def get_all_users(db: Session = Depends(get_db)):
 
 @router.post("/api/admin/create-member")
 def create_member(data: dict, db: Session = Depends(get_db)):
-    # Admin naya user ya admin bana raha hai
     hashed = bcrypt.hashpw(data['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     new_member = models.User(
         full_name=data['full_name'], email=data['email'], 
@@ -80,7 +81,6 @@ async def analyze_uploaded_video(request: Request, file: UploadFile = File(...),
     form_data = await request.form()
     user_id = int(form_data.get("user_id", 1))
     
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     
     try:
@@ -100,7 +100,7 @@ async def analyze_uploaded_video(request: Request, file: UploadFile = File(...),
             processing_time_sec=1.5, client_ip=request.client.host
         )
         db.add(new_analysis)
-        db.flush() # ID nikalne ke liye
+        db.flush() 
 
         db.add(models.VideoMetadata(analysis_id=new_analysis.analysis_id, file_size_mb=2.5, resolution="1080p", codec="H.264"))
         db.commit()

@@ -1,21 +1,26 @@
 import torch
 import torch.nn as nn
+import torchvision.models as models
 
-class BranchB_PhysicsMotion(nn.Module):
-    def __init__(self):
-        super(BranchB_PhysicsMotion, self).__init__()
-        self.flow_encoder = nn.Sequential(
-            nn.Conv2d(2, 64, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten()
-        )
-        self.fc_physics = nn.Linear(128, 512)
+class PhysicsExpert(nn.Module):
+    def __init__(self, embed_dim=256):
+        super(PhysicsExpert, self).__init__()
+        # ResNet18 for processing Optical Flow
+        self.flow_cnn = models.resnet18(pretrained=True)
+        # 2-channel optical flow (u, v) ke liye layer change ki hai
+        self.flow_cnn.conv1 = nn.Conv2d(2, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.flow_cnn.fc = nn.Linear(self.flow_cnn.fc.in_features, embed_dim)
 
-    def forward(self, flow_frames):
-        features = self.flow_encoder(flow_frames)
-        return self.fc_physics(features)
+    def forward(self, optical_flow):
+        return self.flow_cnn(optical_flow)
+
+# 👑 PINN NOVELTY: Motion Hallucination Check
+def calculate_physics_penalty(optical_flow):
+    u = optical_flow[:, 0, :, :] 
+    v = optical_flow[:, 1, :, :] 
+    
+    du_dx = u[:, :, 1:] - u[:, :, :-1]  
+    dv_dy = v[:, 1:, :] - v[:, :-1, :]  
+    
+    divergence = torch.abs(du_dx[:, :-1, :] + dv_dy[:, :, :-1])
+    return torch.mean(divergence)
