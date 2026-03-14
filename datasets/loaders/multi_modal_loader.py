@@ -103,7 +103,7 @@ class DeepGuardDataset(Dataset):
         label = self.labels[idx]
         
         frames_np = self.extract_frames(video_path)
-        video_rgb = torch.tensor(frames_np).permute(3, 0, 1, 2).float() / 255.0
+        video_rgb = torch.tensor(frames_np).permute(0, 3, 1, 2).float() / 255.0
         flow_frames = self.extract_optical_flow(frames_np)
         forensics_frames = self.extract_fft(frames_np)
         audio_features = self.extract_audio(video_path)
