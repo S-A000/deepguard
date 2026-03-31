@@ -1,0 +1,24 @@
+# Base Python image
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# System tools aur Microsoft SQL Server ODBC Driver install karna
+RUN apt-get update && apt-get install -y curl gnupg2 apt-transport-https unixodbc-dev
+RUN curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
+RUN curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list
+RUN apt-get update && ACCEPT_EULA=Y apt-get install -y msodbcsql18
+
+# Python libraries install karna
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Saara code copy karna
+COPY . .
+
+# Port open karna
+EXPOSE 8000
+
+# Server start command
+CMD ["uvicorn", "backend.main:app", "--host", "127.0.0.1", "--port", "8000"]
+# (Note: Agar main file 'main.py' hai aur backend folder mein hai toh "backend.main:app" use karein)

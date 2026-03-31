@@ -1,0 +1,21 @@
+# Node.js
+node_modules/
+npm-debug.log
+frontend/node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+env/
+
+# Database & Local Storage (Ye volumes ke zariye handle honge)
+storage/
+logs/
+.git/
+
+# AI Models ko ignore karo
+saved_models/production/*.pth
+*.pth
