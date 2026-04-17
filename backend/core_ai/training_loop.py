@@ -18,7 +18,7 @@ sys.path.append(root_dir)
 # ==========================================
 from backend.core_ai.models.fusion_net import DeepGuardFusionModel 
 from backend.core_ai.models.branch_b_physics import calculate_physics_penalty 
-from datasets.loaders.multi_modal_loader import DeepGuardDataset 
+from custom_datasets.loaders.multi_modal_loader import DeepGuardDatase
 
 def train_model():
     # GPU Setup (Kaggle T4 x2)
