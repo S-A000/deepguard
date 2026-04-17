@@ -29,7 +29,7 @@ def train_model():
     # 🗂️ MASTER DATASET CONFIGURATION (KAGGLE)
     # ==========================================
     # CTO Note: Kaggle par aapke dataset ka exact folder name yahan aayega
-    KAGGLE_DATASET_ROOT = "/kaggle/input/deepguard-master-data" 
+    KAGGLE_DATASET_ROOT = "/kaggle/input/datasets" 
     
     # 🟢 REAL VIDEOS
     REAL_DIRS = [
