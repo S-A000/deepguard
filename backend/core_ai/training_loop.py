@@ -85,7 +85,7 @@ def train_model():
     # ==========================================
     # 🧠 MODEL INITIALIZATION & RESUME LOGIC
     # ==========================================
-    model = DeepGuardFusionModel(embed_dim=256, num_heads=8).to(device)
+    model = DeepGuardFusionModel(embed_dim=256, num_heads=8).float().to(device)
     
     if os.path.exists(final_model_path):
         print(f"\n🔄 Purana Model Mil Gaya! Loading Weights from: {final_model_path}")
