@@ -127,7 +127,7 @@ def train_model():
     # ==========================================
     # 🔥 THE SOTA TRAINING LOOP
     # ==========================================
-    EPOCHS = 6 
+    EPOCHS = 11 
     print(f"\n🔥 INITIATING SOTA TRAINING FOR {EPOCHS} EPOCHS 🔥\n")
 
     for epoch in range(EPOCHS):
