@@ -30,7 +30,7 @@ def train_model():
     # ==========================================
     print("\n[*] Loading EXACT Kaggle Dataset Paths...")
     
-    # 🟢 REAL VIDEOS (Exact Paths from Kaggle Output)
+    # 🟢 REAL VIDEOS
     raw_real_dirs = [
         "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics400_5per/kinetics400_5per/train",
         "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per/train",
@@ -40,7 +40,7 @@ def train_model():
         "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real"
     ]
     
-    # 🔴 FAKE VIDEOS (Exact Paths from Kaggle Output)
+    # 🔴 FAKE VIDEOS
     raw_fake_dirs = [
         "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1",
         "/kaggle/input/datasets/aknirala/dfdc-train-part-18/dfdc_train_part_18",
@@ -79,7 +79,7 @@ def train_model():
         print("❌ Error: Dataset abhi bhi 0 hai. Dataloader mein koi issue hai ya folders khali hain.")
         return
 
-    # DataLoader 
+    # DataLoader (Agar Kaggle crash kare toh num_workers=0 kar lena)
     dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=2, pin_memory=True)
     
     # ==========================================
@@ -95,15 +95,17 @@ def train_model():
         print("\n🆕 Phase 1 Model ban raha hai (First Time Training with Unified Attention)...")
 
     criterion = nn.BCEWithLogitsLoss() 
-    optimizer = optim.AdamW(model.parameters(), lr=0.0001)
+    
+    # 🚀 FIX 1: Lower Learning Rate to prevent NaN (2e-5 is standard for Vision Transformers)
+    optimizer = optim.AdamW(model.parameters(), lr=0.00002)
 
-    # 🚀 FIX 1: ADD THE AMP SCALER (For Mixed Precision Training)
-    scaler = torch.cuda.amp.GradScaler()
+    # 🚀 FIX 2: Modern AMP Scaler Syntax (Removes Kaggle warnings)
+    scaler = torch.amp.GradScaler('cuda')
 
     # ==========================================
     # 🔥 THE SOTA TRAINING LOOP
     # ==========================================
-    EPOCHS = 35 
+    EPOCHS = 6 
     print(f"\n🔥 INITIATING SOTA TRAINING FOR {EPOCHS} EPOCHS 🔥\n")
 
     for epoch in range(EPOCHS):
@@ -120,15 +122,24 @@ def train_model():
             
             optimizer.zero_grad()
             
-            # 🚀 FIX 2: WRAP FORWARD PASS IN AUTOCAST
-            with torch.cuda.amp.autocast():
+            # 🚀 FIX 3: Modern Autocast Syntax
+            with torch.amp.autocast('cuda'):
                 predictions = model(video_rgb, flow, fft, audio)
-                bce_loss = criterion(predictions, labels) 
+                
+                # Force predictions to float32 before calculating loss to prevent NaN
+                bce_loss = criterion(predictions.float(), labels.float()) 
+                
                 pinn_loss = calculate_physics_penalty(flow, alpha=0.1, beta=0.1) 
                 loss = bce_loss + pinn_loss 
             
-            # 🚀 FIX 3: USE SCALER FOR BACKWARD PASS
+            # 🚀 FIX 4: SOTA GRADIENT CLIPPING
             scaler.scale(loss).backward()
+            
+            # Unscale gradients before clipping them
+            scaler.unscale_(optimizer)
+            # Shield: Clip gradients to max length 1.0
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            
             scaler.step(optimizer)
             scaler.update()
             
