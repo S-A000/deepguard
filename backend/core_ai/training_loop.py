@@ -116,7 +116,7 @@ def train_model():
             fft = fft.to(device)
             audio = audio.to(device)
             
-            labels = labels.float().to(device).unsqueeze(1)
+            labels = labels.float().to(device).view(-1, 1)
             
             optimizer.zero_grad()
             
