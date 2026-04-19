@@ -83,7 +83,7 @@ def train_model():
         return
 
     # 🚀 FIX: Batch size increased to 8 for Dual GPU processing
-    dataloader = DataLoader(dataset, batch_size=8, shuffle=True, num_workers=2, pin_memory=True)
+    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=2, pin_memory=True)
     
     # ==========================================
     # 🧠 MODEL INITIALIZATION & RESUME LOGIC
@@ -159,6 +159,9 @@ def train_model():
             
             loop.set_description(f"Epoch [{epoch+1}/{EPOCHS}]")
             loop.set_postfix(Total_Loss=f"{loss.item():.4f}", BCE=f"{bce_loss.item():.4f}", PINN=f"{pinn_loss.item():.4f}")
+            
+            del predictions, loss, bce_loss, pinn_loss
+            torch.cuda.empty_cache()
 
     # ==========================================
     # 💾 SAVE UPDATED BRAIN
