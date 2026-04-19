@@ -79,13 +79,20 @@ def train_model():
         print("❌ Error: Dataset abhi bhi 0 hai. Dataloader mein koi issue hai ya folders khali hain.")
         return
 
-    # DataLoader (Agar Kaggle crash kare toh num_workers=0 kar lena)
+    # DataLoader (Batch size increased to 8 for Dual GPU)
     dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=2, pin_memory=True)
     
     # ==========================================
     # 🧠 MODEL INITIALIZATION & RESUME LOGIC
     # ==========================================
-    model = DeepGuardFusionModel(embed_dim=256, num_heads=8).float().to(device)
+    model = DeepGuardFusionModel(embed_dim=256, num_heads=8).float()
+    
+    # 🚀 DUAL GPU ENABLER
+    if torch.cuda.device_count() > 1:
+        print(f"🔥 Dual GPU Activated! Using {torch.cuda.device_count()} GPUs in Parallel! 🔥")
+        model = nn.DataParallel(model)
+        
+    model = model.to(device)
     
     if os.path.exists(final_model_path):
         print(f"\n🔄 Purana Model Mil Gaya! Loading Weights from: {final_model_path}")
@@ -96,10 +103,10 @@ def train_model():
 
     criterion = nn.BCEWithLogitsLoss() 
     
-    # 🚀 FIX 1: Lower Learning Rate to prevent NaN (2e-5 is standard for Vision Transformers)
+    # Lower Learning Rate to prevent NaN (2e-5 is standard for Vision Transformers)
     optimizer = optim.AdamW(model.parameters(), lr=0.00002)
 
-    # 🚀 FIX 2: Modern AMP Scaler Syntax (Removes Kaggle warnings)
+    # Modern AMP Scaler Syntax (Removes Kaggle warnings)
     scaler = torch.amp.GradScaler('cuda')
 
     # ==========================================
@@ -122,7 +129,7 @@ def train_model():
             
             optimizer.zero_grad()
             
-            # 🚀 FIX 3: Modern Autocast Syntax
+            # Modern Autocast Syntax
             with torch.amp.autocast('cuda'):
                 predictions = model(video_rgb, flow, fft, audio)
                 
@@ -132,7 +139,7 @@ def train_model():
                 pinn_loss = calculate_physics_penalty(flow, alpha=0.1, beta=0.1) 
                 loss = bce_loss + pinn_loss 
             
-            # 🚀 FIX 4: SOTA GRADIENT CLIPPING
+            # SOTA GRADIENT CLIPPING
             scaler.scale(loss).backward()
             
             # Unscale gradients before clipping them
