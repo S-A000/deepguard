@@ -3,7 +3,7 @@ import sys
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset # 🚀 Naya Import
 from tqdm import tqdm
 import warnings
 
@@ -68,29 +68,43 @@ def train_model():
     final_model_path = os.path.join(SAVE_MODEL_DIR, "deepguard_fusion_v1.pth")
 
     # ==========================================
-    # 📦 FLEXIBLE DATA LOADING
+    # ⚖️ THE CURE: FORCED BALANCED DATA LOADING
     # ==========================================
-    print("\n[*] Loading The MEGA Enterprise Dataset...")
-    dataset = DeepGuardDataset(
+    print("\n[*] Loading The BALANCED Enterprise Dataset (50% Real, 50% Fake)...")
+    
+    # 🚀 Yahan model barabar data uthayega taake lazy na ho sake!
+    SAMPLES_PER_CLASS = 2000 # 2000 Real + 2000 Fake = Total 4000
+    
+    real_dataset = DeepGuardDataset(
         real_dirs=REAL_DIRS, 
-        fake_dirs=FAKE_DIRS, 
+        fake_dirs=[], # Fake empty for this chunk
         num_frames=16, 
-        max_samples=5000 
+        max_samples=SAMPLES_PER_CLASS 
     )
     
-    if len(dataset) == 0:
-        print("❌ Error: Dataset abhi bhi 0 hai. Dataloader mein koi issue hai ya folders khali hain.")
+    fake_dataset = DeepGuardDataset(
+        real_dirs=[], # Real empty for this chunk
+        fake_dirs=FAKE_DIRS, 
+        num_frames=16, 
+        max_samples=SAMPLES_PER_CLASS 
+    )
+
+    if len(real_dataset) == 0 or len(fake_dataset) == 0:
+        print("❌ Error: Koi ek dataset khali hai. Paths check karein.")
         return
 
-    # 🚀 FIX: Batch size increased to 8 for Dual GPU processing
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=2, pin_memory=True)
+    # Dono datasets ko aapas mein jor (merge) diya gaya
+    balanced_dataset = ConcatDataset([real_dataset, fake_dataset])
+    print(f"✅ Total Balanced Videos Ready: {len(balanced_dataset)}")
+
+    dataloader = DataLoader(balanced_dataset, batch_size=4, shuffle=True, num_workers=2, pin_memory=True)
     
     # ==========================================
     # 🧠 MODEL INITIALIZATION & RESUME LOGIC
     # ==========================================
     model = DeepGuardFusionModel(embed_dim=256, num_heads=8).float()
     
-    # 🚀 DUAL GPU ENABLER
+    # DUAL GPU ENABLER
     if torch.cuda.device_count() > 1:
         print(f"🔥 Dual GPU Activated! Using {torch.cuda.device_count()} GPUs in Parallel! 🔥")
         model = nn.DataParallel(model)
@@ -102,14 +116,12 @@ def train_model():
         model.load_state_dict(torch.load(final_model_path, map_location=device), strict=False)
         print("✅ Resume Successful. Continuing training...")
     else:
-        print("\n🆕 Phase 1 Model ban raha hai (First Time Training with Unified Attention)...")
+        print("\n🆕 Phase 1 Model ban raha hai (Fresh Training with Balanced Data)...")
 
+    # Kyunke data ab 100% balanced hai, penalty/pos_weight ki zaroorat nahi!
     criterion = nn.BCEWithLogitsLoss() 
     
-    # Lower Learning Rate to prevent NaN (2e-5 is standard for Vision Transformers)
     optimizer = optim.AdamW(model.parameters(), lr=0.00002)
-
-    # Modern AMP Scaler Syntax
     scaler = torch.amp.GradScaler('cuda')
 
     # ==========================================
@@ -124,31 +136,24 @@ def train_model():
         
         for video_rgb, flow, fft, audio, labels in loop:
             
-            # 🚀 DATA SANITIZER: Replace NaN/Inf from corrupt media files with 0s
             video_rgb = torch.nan_to_num(video_rgb.to(device))
             flow = torch.nan_to_num(flow.to(device))
             fft = torch.nan_to_num(fft.to(device))
             audio = torch.nan_to_num(audio.to(device))
             
             labels = labels.float().to(device).view(-1, 1)
-            
             optimizer.zero_grad()
             
-            # Modern Autocast Syntax
             with torch.amp.autocast('cuda'):
                 predictions = model(video_rgb, flow, fft, audio)
                 
-                # 🚀 BATCH SKIPPER: If predictions still output NaN, skip this specific batch safely
                 if torch.isnan(predictions).any():
                     continue
                 
-                # Force predictions to float32 before calculating loss
                 bce_loss = criterion(predictions.float(), labels.float()) 
-                
                 pinn_loss = calculate_physics_penalty(flow, alpha=0.1, beta=0.1) 
                 loss = bce_loss + pinn_loss 
             
-            # SOTA GRADIENT CLIPPING
             scaler.scale(loss).backward()
             
             scaler.unscale_(optimizer)
