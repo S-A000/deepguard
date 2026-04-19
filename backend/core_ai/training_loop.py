@@ -121,13 +121,13 @@ def train_model():
     # Kyunke data ab 100% balanced hai, penalty/pos_weight ki zaroorat nahi!
     criterion = nn.BCEWithLogitsLoss() 
     
-    optimizer = optim.AdamW(model.parameters(), lr=0.00002)
+    optimizer = optim.AdamW(model.parameters(), lr=0.00001)
     scaler = torch.amp.GradScaler('cuda')
 
     # ==========================================
     # 🔥 THE SOTA TRAINING LOOP
     # ==========================================
-    EPOCHS = 11 
+    EPOCHS = 30
     print(f"\n🔥 INITIATING SOTA TRAINING FOR {EPOCHS} EPOCHS 🔥\n")
 
     for epoch in range(EPOCHS):
@@ -151,7 +151,7 @@ def train_model():
                     continue
                 
                 bce_loss = criterion(predictions.float(), labels.float()) 
-                pinn_loss = calculate_physics_penalty(flow, alpha=0.1, beta=0.1) 
+                pinn_loss = calculate_physics_penalty(flow, alpha=0.01, beta=0.1) 
                 loss = bce_loss + pinn_loss 
             
             scaler.scale(loss).backward()
