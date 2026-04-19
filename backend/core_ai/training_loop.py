@@ -5,6 +5,9 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import warnings
+
+warnings.filterwarnings("ignore")
 
 # ==========================================
 # 📂 SYSTEM PATHS
@@ -79,8 +82,8 @@ def train_model():
         print("❌ Error: Dataset abhi bhi 0 hai. Dataloader mein koi issue hai ya folders khali hain.")
         return
 
-    # DataLoader (Batch size increased to 8 for Dual GPU)
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=2, pin_memory=True)
+    # 🚀 FIX: Batch size increased to 8 for Dual GPU processing
+    dataloader = DataLoader(dataset, batch_size=8, shuffle=True, num_workers=2, pin_memory=True)
     
     # ==========================================
     # 🧠 MODEL INITIALIZATION & RESUME LOGIC
@@ -106,7 +109,7 @@ def train_model():
     # Lower Learning Rate to prevent NaN (2e-5 is standard for Vision Transformers)
     optimizer = optim.AdamW(model.parameters(), lr=0.00002)
 
-    # Modern AMP Scaler Syntax (Removes Kaggle warnings)
+    # Modern AMP Scaler Syntax
     scaler = torch.amp.GradScaler('cuda')
 
     # ==========================================
@@ -120,10 +123,12 @@ def train_model():
         loop = tqdm(dataloader, total=len(dataloader), leave=True)
         
         for video_rgb, flow, fft, audio, labels in loop:
-            video_rgb = video_rgb.to(device)
-            flow = flow.to(device)
-            fft = fft.to(device)
-            audio = audio.to(device)
+            
+            # 🚀 DATA SANITIZER: Replace NaN/Inf from corrupt media files with 0s
+            video_rgb = torch.nan_to_num(video_rgb.to(device))
+            flow = torch.nan_to_num(flow.to(device))
+            fft = torch.nan_to_num(fft.to(device))
+            audio = torch.nan_to_num(audio.to(device))
             
             labels = labels.float().to(device).view(-1, 1)
             
@@ -133,7 +138,11 @@ def train_model():
             with torch.amp.autocast('cuda'):
                 predictions = model(video_rgb, flow, fft, audio)
                 
-                # Force predictions to float32 before calculating loss to prevent NaN
+                # 🚀 BATCH SKIPPER: If predictions still output NaN, skip this specific batch safely
+                if torch.isnan(predictions).any():
+                    continue
+                
+                # Force predictions to float32 before calculating loss
                 bce_loss = criterion(predictions.float(), labels.float()) 
                 
                 pinn_loss = calculate_physics_penalty(flow, alpha=0.1, beta=0.1) 
@@ -142,9 +151,7 @@ def train_model():
             # SOTA GRADIENT CLIPPING
             scaler.scale(loss).backward()
             
-            # Unscale gradients before clipping them
             scaler.unscale_(optimizer)
-            # Shield: Clip gradients to max length 1.0
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             
             scaler.step(optimizer)
