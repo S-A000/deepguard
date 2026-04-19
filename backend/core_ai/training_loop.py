@@ -97,6 +97,9 @@ def train_model():
     criterion = nn.BCEWithLogitsLoss() 
     optimizer = optim.AdamW(model.parameters(), lr=0.0001)
 
+    # 🚀 FIX 1: ADD THE AMP SCALER (For Mixed Precision Training)
+    scaler = torch.cuda.amp.GradScaler()
+
     # ==========================================
     # 🔥 THE SOTA TRAINING LOOP
     # ==========================================
@@ -117,13 +120,17 @@ def train_model():
             
             optimizer.zero_grad()
             
-            predictions = model(video_rgb, flow, fft, audio)
-            bce_loss = criterion(predictions, labels) 
-            pinn_loss = calculate_physics_penalty(flow, alpha=0.1, beta=0.1) 
-            loss = bce_loss + pinn_loss 
+            # 🚀 FIX 2: WRAP FORWARD PASS IN AUTOCAST
+            with torch.cuda.amp.autocast():
+                predictions = model(video_rgb, flow, fft, audio)
+                bce_loss = criterion(predictions, labels) 
+                pinn_loss = calculate_physics_penalty(flow, alpha=0.1, beta=0.1) 
+                loss = bce_loss + pinn_loss 
             
-            loss.backward()
-            optimizer.step()
+            # 🚀 FIX 3: USE SCALER FOR BACKWARD PASS
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             
             loop.set_description(f"Epoch [{epoch+1}/{EPOCHS}]")
             loop.set_postfix(Total_Loss=f"{loss.item():.4f}", BCE=f"{bce_loss.item():.4f}", PINN=f"{pinn_loss.item():.4f}")
