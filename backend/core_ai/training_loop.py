@@ -73,7 +73,7 @@ def train_model():
     print("\n[*] Loading The BALANCED Enterprise Dataset (50% Real, 50% Fake)...")
     
     # 🚀 Yahan model barabar data uthayega taake lazy na ho sake!
-    SAMPLES_PER_CLASS = 2000 # 2000 Real + 2000 Fake = Total 4000
+    SAMPLES_PER_CLASS = 100 # 2000 Real + 2000 Fake = Total 4000
     
     real_dataset = DeepGuardDataset(
         real_dirs=REAL_DIRS, 
@@ -127,7 +127,7 @@ def train_model():
     # ==========================================
     # 🔥 THE SOTA TRAINING LOOP
     # ==========================================
-    EPOCHS = 30
+    EPOCHS = 5
     print(f"\n🔥 INITIATING SOTA TRAINING FOR {EPOCHS} EPOCHS 🔥\n")
 
     for epoch in range(EPOCHS):
