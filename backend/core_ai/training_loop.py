@@ -38,20 +38,13 @@ def train_model():
     
     # 🟢 REAL VIDEOS
     raw_real_dirs = [
-        "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics400_5per/kinetics400_5per/train",
-        "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per/train",
-        "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo",
         "/kaggle/input/datasets/pevogam/ucf101/UCF101/UCF-101",
-        "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
-        "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real"
+        "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real"
     ]
     
     # 🔴 FAKE VIDEOS
     raw_fake_dirs = [
-        "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1",
-        "/kaggle/input/datasets/aknirala/dfdc-train-part-18/dfdc_train_part_18",
-        "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake",
-        "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake"
+        "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake"
     ]
 
     # Verify which paths actually exist right now to prevent crashes
