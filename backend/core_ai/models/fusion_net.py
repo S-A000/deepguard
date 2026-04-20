@@ -31,7 +31,7 @@ class DeepGuardFusionModel(nn.Module):
         # Hum 4 streams ko average karke 1 vector (embed_dim) par le aaye hain
         self.fusion_mlp = nn.Sequential(
             nn.Linear(embed_dim, 512),
-            nn.BatchNorm1d(512),
+            nn.LayerNorm(512),
             nn.ReLU(),
             nn.Dropout(0.4),
             nn.Linear(512, 128),
