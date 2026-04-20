@@ -3,11 +3,14 @@ import sys
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, ConcatDataset # 🚀 Naya Import
+from torch.utils.data import DataLoader, ConcatDataset
 from tqdm import tqdm
 import warnings
 
 warnings.filterwarnings("ignore")
+
+# 🚀 FIX 1: Memory fragmentation bypass
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 # ==========================================
 # 📂 SYSTEM PATHS
@@ -72,18 +75,18 @@ def train_model():
     # ==========================================
     print("\n[*] Loading The BALANCED Enterprise Dataset (50% Real, 50% Fake)...")
     
-    # 🚀 Yahan model barabar data uthayega taake lazy na ho sake!
-    SAMPLES_PER_CLASS = 100 # 2000 Real + 2000 Fake = Total 4000
+    # Yahan model barabar data uthayega taake lazy na ho sake!
+    SAMPLES_PER_CLASS = 100 
     
     real_dataset = DeepGuardDataset(
         real_dirs=REAL_DIRS, 
-        fake_dirs=[], # Fake empty for this chunk
+        fake_dirs=[], 
         num_frames=16, 
         max_samples=SAMPLES_PER_CLASS 
     )
     
     fake_dataset = DeepGuardDataset(
-        real_dirs=[], # Real empty for this chunk
+        real_dirs=[], 
         fake_dirs=FAKE_DIRS, 
         num_frames=16, 
         max_samples=SAMPLES_PER_CLASS 
@@ -93,48 +96,48 @@ def train_model():
         print("❌ Error: Koi ek dataset khali hai. Paths check karein.")
         return
 
-    # Dono datasets ko aapas mein jor (merge) diya gaya
     balanced_dataset = ConcatDataset([real_dataset, fake_dataset])
     print(f"✅ Total Balanced Videos Ready: {len(balanced_dataset)}")
 
-    dataloader = DataLoader(balanced_dataset, batch_size=4, shuffle=True, num_workers=2, pin_memory=True)
+    # 🚀 FIX 2: num_workers=0 to prevent Kaggle deadlocks! Batch size 2 for safety.
+    dataloader = DataLoader(balanced_dataset, batch_size=2, shuffle=True, num_workers=0, pin_memory=True)
     
     # ==========================================
     # 🧠 MODEL INITIALIZATION & RESUME LOGIC
     # ==========================================
     model = DeepGuardFusionModel(embed_dim=256, num_heads=8).float()
     
-    # DUAL GPU ENABLER
     if torch.cuda.device_count() > 1:
         print(f"🔥 Dual GPU Activated! Using {torch.cuda.device_count()} GPUs in Parallel! 🔥")
         model = nn.DataParallel(model)
         
     model = model.to(device)
     
+    # 🚀 FIX 3: Auto-delete old model for a guaranteed fresh start
     if os.path.exists(final_model_path):
-        print(f"\n🔄 Purana Model Mil Gaya! Loading Weights from: {final_model_path}")
-        model.load_state_dict(torch.load(final_model_path, map_location=device), strict=False)
-        print("✅ Resume Successful. Continuing training...")
-    else:
-        print("\n🆕 Phase 1 Model ban raha hai (Fresh Training with Balanced Data)...")
+        os.remove(final_model_path)
+        print(f"\n🗑️ Purana model delete kar diya gaya! Fresh training shuru ho rahi hai...")
+    
+    print("\n🆕 Phase 1 Model ban raha hai (Fresh Training with Balanced Data)...")
 
-    # Kyunke data ab 100% balanced hai, penalty/pos_weight ki zaroorat nahi!
     criterion = nn.BCEWithLogitsLoss() 
     
-    optimizer = optim.AdamW(model.parameters(), lr=0.00001)
+    # 🚀 FIX 4: Higher learning rate to force learning visibility
+    optimizer = optim.AdamW(model.parameters(), lr=0.0001)
     scaler = torch.amp.GradScaler('cuda')
 
     # ==========================================
-    # 🔥 THE SOTA TRAINING LOOP
+    # 🔥 THE DEBUG TRAINING LOOP
     # ==========================================
     EPOCHS = 5
-    print(f"\n🔥 INITIATING SOTA TRAINING FOR {EPOCHS} EPOCHS 🔥\n")
+    print(f"\n🔥 INITIATING DEBUG TRAINING FOR {EPOCHS} EPOCHS 🔥\n")
 
     for epoch in range(EPOCHS):
         model.train()
         loop = tqdm(dataloader, total=len(dataloader), leave=True)
         
-        for video_rgb, flow, fft, audio, labels in loop:
+        # Enumerate added to get exact batch index
+        for batch_idx, (video_rgb, flow, fft, audio, labels) in enumerate(loop):
             
             video_rgb = torch.nan_to_num(video_rgb.to(device))
             flow = torch.nan_to_num(flow.to(device))
@@ -148,24 +151,30 @@ def train_model():
                 predictions = model(video_rgb, flow, fft, audio)
                 
                 if torch.isnan(predictions).any():
+                    print(f"\n⚠️ WARNING: NaN in predictions at batch {batch_idx+1}")
                     continue
                 
                 bce_loss = criterion(predictions.float(), labels.float()) 
-                pinn_loss = calculate_physics_penalty(flow, alpha=0.01, beta=0.1) 
-                loss = bce_loss + pinn_loss 
+                # Temporary: Ignoring PINN to isolate BCE classification
+                loss = bce_loss 
             
             scaler.scale(loss).backward()
             
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # Stricter gradient clipping to avoid explosion
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5) 
             
             scaler.step(optimizer)
             scaler.update()
             
             loop.set_description(f"Epoch [{epoch+1}/{EPOCHS}]")
-            loop.set_postfix(Total_Loss=f"{loss.item():.4f}", BCE=f"{bce_loss.item():.4f}", PINN=f"{pinn_loss.item():.4f}")
+            loop.set_postfix(BCE=f"{bce_loss.item():.4f}")
             
-            del predictions, loss, bce_loss, pinn_loss
+            # 🚀 FIX 5: Manual Terminal Print for absolute visibility
+            if batch_idx % 2 == 0: 
+                print(f"   >>> Batch {batch_idx+1} Done | BCE Loss: {bce_loss.item():.4f}")
+            
+            del predictions, loss, bce_loss
             torch.cuda.empty_cache()
 
     # ==========================================
