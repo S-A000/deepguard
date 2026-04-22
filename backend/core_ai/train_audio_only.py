@@ -80,9 +80,18 @@ def train_audio_model():
             audio = torch.nan_to_num(audio.to(device))
             labels = labels.float().to(device).view(-1, 1)
 
+            audio = audio + 1e-5 * torch.randn_like(audio)
+            
+            # 2. Audio ko Normalize karein (Mean=0, Std=1) taake spikes na aayen
+            audio = (audio - audio.mean(dim=-1, keepdim=True)) / (audio.std(dim=-1, keepdim=True) + 1e-8)
+            
+            # 3. Agar koi bohut bari value aa jaye toh usay clip kar dein (-1 se 1 ke darmiyan)
+            audio = torch.clamp(audio, min=-1.0, max=1.0)
+            # ==========================================
+
             optimizer.zero_grad()
             
-            # Seedha Float32 mein training (Kyunke audio halke hote hain, memory masla nahi hoga)
+            # Ab model ko bilkul saaf aur safe audio milegi
             predictions = model(audio)
             
             if torch.isnan(predictions).any():
