@@ -85,13 +85,30 @@ class DeepGuardDataset(Dataset):
 
     def extract_audio(self, video_path):
         try:
+            # 1. Load Audio
             y, sr = librosa.load(video_path, sr=16000, duration=1.0)
+            
+            # 2. 🚨 THE "SILENT KILLER" CHECK: Librosa kabhi NaN de deta hai corrupt video par
+            if np.isnan(y).any() or np.isinf(y).any():
+                print(f"\n⚠️ CRITICAL WARNING: Librosa found NaN/Inf in video: {video_path}")
+                # Fauran NaN ko zero se replace karo aur noise daalo
+                y = np.nan_to_num(y) + (1e-5 * np.random.randn(len(y)))
+
+            # 3. Padding agar audio 1 second se kam ho
             if len(y) < 16000:
                 y = np.pad(y, (0, 16000 - len(y)))
-            return torch.tensor(y[:16000]).float()
-        except Exception:
-            # Fallback agar audio na ho ya corrupt ho
-            return torch.zeros(16000).float()
+
+            # 4. Final Cleanup: Ek bar aur confirm karein ke output saaf hai
+            tensor_audio = torch.tensor(y[:16000]).float()
+            tensor_audio = torch.nan_to_num(tensor_audio) # Final PyTorch level check
+            
+            return tensor_audio
+            
+        except Exception as e:
+            # Fallback agar file open hi na ho
+            print(f"⚠️ Librosa failed on {video_path}: {e}")
+            noise = 1e-5 * np.random.randn(16000)
+            return torch.tensor(noise).float()
 
     def __getitem__(self, idx):
         video_path = self.video_paths[idx]
