@@ -43,17 +43,17 @@ def train_audio_model():
     print(f"\n🎧 Audio-Only System Online! Training on: {device}")
 
     # ==========================================
-    # 🗺️ 4-PHASE DATASET ROUTING (AUDIO SOTA STRATEGY)
+    # 🗺️ 4-PHASE DATASET ROUTING (UPDATED PATHS)
     # ==========================================
     if CURRENT_PHASE == 1:
         print("🟢 PHASE 1: WARM-UP (Pure Audio - Basic AI Voices)")
-        # Phase 1 mein hum thora aasaan aur clean data denge
+        # 🚀 Path updated perfectly according to your Kaggle Screenshots
         REAL_DIRS = [
-            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Real",
+            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Real/Real",
             "/kaggle/input/vctk-corpus-version-0-92/VCTK-Corpus/wav48"
         ]
         FAKE_DIRS = [
-            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Fake"
+            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Fake/Fake"
         ]
         LR = 0.0001
         PREV_MODEL_PATH = None
@@ -61,13 +61,12 @@ def train_audio_model():
 
     elif CURRENT_PHASE == 2:
         print("🟡 PHASE 2: ADVANCED AUDIO (Adding WaveFake Hard Architectures)")
-        # Phase 2 mein WaveFake ki mushkil AI aawazein add kar denge
         REAL_DIRS = [
-            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Real",
+            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Real/Real",
             "/kaggle/input/vctk-corpus-version-0-92/VCTK-Corpus/wav48"
         ]
         FAKE_DIRS = [
-            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Fake",
+            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Fake/Fake",
             "/kaggle/input/wavefake/generated_audio/common_voices_prompts_from_conform/generated"
         ]
         LR = 0.00005
@@ -76,7 +75,6 @@ def train_audio_model():
 
     elif CURRENT_PHASE == 3:
         print("🟠 PHASE 3: CROSS-DOMAIN FAKES (Adding Video Datasets - FF++ & DFDC)")
-        # Phase 3 mein woh video datasets ayenge jin mein audio hai
         REAL_DIRS = [
             "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
             "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real"
@@ -109,16 +107,24 @@ def train_audio_model():
         print("❌ Invalid Phase Selected!")
         return
 
-    REAL_DIRS = [d for d in REAL_DIRS if os.path.exists(d)]
-    FAKE_DIRS = [d for d in FAKE_DIRS if os.path.exists(d)]
-    print(f"✅ Active Folders - Real: {len(REAL_DIRS)} | Fake: {len(FAKE_DIRS)}")
+    # 🛡️ THE PATH VERIFIER
+    valid_real = [d for d in REAL_DIRS if os.path.exists(d)]
+    valid_fake = [d for d in FAKE_DIRS if os.path.exists(d)]
+    
+    if len(valid_real) == 0 or len(valid_fake) == 0:
+        print("\n⚠️ ALERT: Kaggle URL Slug Mismatch Detected!")
+        print("Kaggle ne folder ka naam thora chota/badal diya hai.")
+        print("👉 HINT: Kaggle menu mein 'Real' folder pe 3 dots click karein, 'Copy file path' dabayen, aur code mein REAL_DIRS ko us se replace kar dein.")
+        return
+
+    print(f"✅ Active Folders - Real: {len(valid_real)} | Fake: {len(valid_fake)}")
 
     # ==========================================
     # 🧠 MODEL INITIALIZATION & LOADING
     # ==========================================
     SAMPLES_PER_CLASS = 1000 
-    real_dataset = DeepGuardDataset(real_dirs=REAL_DIRS, fake_dirs=[], max_samples=SAMPLES_PER_CLASS)
-    fake_dataset = DeepGuardDataset(real_dirs=[], fake_dirs=FAKE_DIRS, max_samples=SAMPLES_PER_CLASS)
+    real_dataset = DeepGuardDataset(real_dirs=valid_real, fake_dirs=[], max_samples=SAMPLES_PER_CLASS)
+    fake_dataset = DeepGuardDataset(real_dirs=[], fake_dirs=valid_fake, max_samples=SAMPLES_PER_CLASS)
     
     balanced_dataset = ConcatDataset([real_dataset, fake_dataset])
     # Batch size 16 is safe here because audio tensors are small
