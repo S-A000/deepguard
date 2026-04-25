@@ -43,7 +43,7 @@ def train_audio_model():
     print(f"\n🎧 Audio-Only System Online! Training on: {device}")
 
     # ==========================================
-    # 🗺️ 4-PHASE DATASET ROUTING (UPDATED PATHS)
+    # 🗺️ 4-PHASE DATASET ROUTING
     # ==========================================
     if CURRENT_PHASE == 1:
         print("🟢 PHASE 1: WARM-UP (Pure Audio - Basic AI Voices)")
@@ -116,10 +116,9 @@ def train_audio_model():
     print(f"✅ Active Folders - Real: {len(valid_real)} | Fake: {len(valid_fake)}")
 
     # ==========================================
-    # 🧠 DATASET LOADING (AUDIO ONLY MODE)
+    # 🧠 DATASET LOADING
     # ==========================================
     SAMPLES_PER_CLASS = 1000 
-    # 🚀 FIX: Passed mode="audio_only"
     real_dataset = DeepGuardDataset(real_dirs=valid_real, fake_dirs=[], max_samples=SAMPLES_PER_CLASS, mode="audio_only")
     fake_dataset = DeepGuardDataset(real_dirs=[], fake_dirs=valid_fake, max_samples=SAMPLES_PER_CLASS, mode="audio_only")
     
@@ -137,7 +136,9 @@ def train_audio_model():
         except Exception as e:
             print(f"⚠️ Error loading memory: {e}")
 
-    # ❄️ THE SOTA FEATURE EXTRACTOR FREEZE
+    # ==========================================
+    # ❄️ THE SOTA FREEZER
+    # ==========================================
     print("\n❄️ Applying Fix Stack: Freezing Wav2Vec2 Feature Extractor...")
     frozen_layers = 0
     for name, param in model.named_parameters():
@@ -151,41 +152,37 @@ def train_audio_model():
     os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
 
     # ==========================================
-    # 🔥 GATEKEEPER TRAINING LOOP (ENTERPRISE GRADE)
+    # 🔥 SOTA TRAINING LOOP
     # ==========================================
     EPOCHS = 10
     for epoch in range(EPOCHS):
         model.train()
         loop = tqdm(dataloader, total=len(dataloader), leave=True)
         
-        # 🚀 FIX: Ignore dummy video variables with '_'
         for batch_idx, (_, _, _, audio, labels) in enumerate(loop):
             
-            # 🛡️ GATEKEEPER CHECK 1: Strict 16kHz Shape Validation
-            if audio.shape[-1] != 16000:
-                continue
-                
-            # 🛡️ GATEKEEPER CHECK 2: Purity Check (Catch Corrupt/NaN audio early)
+            # 🚀 FIX: Removed the redundant `if audio.shape[-1] != 16000: continue` 
+            
+            # 🛡️ GATEKEEPER: Purity Check ONLY
             if torch.isnan(audio).any() or torch.isinf(audio).any():
                 continue
 
             audio = audio.float().to(device)
             labels = labels.float().to(device).view(-1, 1)
 
-            # 🛡️ THE ONLY AUDIO FIX: Strict Clamping (No Fake Epsilon Noise)
+            # 🛡️ THE ONLY AUDIO FIX: Strict Clamping
             audio = torch.clamp(audio, min=-1.0, max=1.0)
 
             optimizer.zero_grad()
             predictions = model(audio)
             
-            # 🛡️ GATEKEEPER CHECK 3: Final Model Output Safety
+            # Final output safety
             if torch.isnan(predictions).any():
                 continue
                 
             loss = criterion(predictions, labels)
             loss.backward()
             
-            # Gradient Safety
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
             optimizer.step()
             
