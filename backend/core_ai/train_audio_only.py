@@ -47,7 +47,6 @@ def train_audio_model():
     # ==========================================
     if CURRENT_PHASE == 1:
         print("🟢 PHASE 1: WARM-UP (Pure Audio - Basic AI Voices)")
-        # 🚀 Path updated perfectly according to your Kaggle Screenshots
         REAL_DIRS = [
             "/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Real/Real",
             "/kaggle/input/datasets/kynthesis/vctk-corpus/VCTK-Corpus/wav48"
@@ -55,7 +54,7 @@ def train_audio_model():
         FAKE_DIRS = [
             "/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Fake/Fake"
         ]
-        LR = 0.0001
+        LR = 0.00005
         PREV_MODEL_PATH = None
         SAVE_PATH = "/kaggle/working/saved_models/production/audio_phase1.pth"
 
@@ -107,27 +106,24 @@ def train_audio_model():
         print("❌ Invalid Phase Selected!")
         return
 
-    # 🛡️ THE PATH VERIFIER
     valid_real = [d for d in REAL_DIRS if os.path.exists(d)]
     valid_fake = [d for d in FAKE_DIRS if os.path.exists(d)]
     
     if len(valid_real) == 0 or len(valid_fake) == 0:
         print("\n⚠️ ALERT: Kaggle URL Slug Mismatch Detected!")
-        print("Kaggle ne folder ka naam thora chota/badal diya hai.")
-        print("👉 HINT: Kaggle menu mein 'Real' folder pe 3 dots click karein, 'Copy file path' dabayen, aur code mein REAL_DIRS ko us se replace kar dein.")
         return
 
     print(f"✅ Active Folders - Real: {len(valid_real)} | Fake: {len(valid_fake)}")
 
     # ==========================================
-    # 🧠 MODEL INITIALIZATION & LOADING
+    # 🧠 DATASET LOADING (AUDIO ONLY MODE)
     # ==========================================
     SAMPLES_PER_CLASS = 1000 
-    real_dataset = DeepGuardDataset(real_dirs=valid_real, fake_dirs=[], max_samples=SAMPLES_PER_CLASS)
-    fake_dataset = DeepGuardDataset(real_dirs=[], fake_dirs=valid_fake, max_samples=SAMPLES_PER_CLASS)
+    # 🚀 FIX: Passed mode="audio_only"
+    real_dataset = DeepGuardDataset(real_dirs=valid_real, fake_dirs=[], max_samples=SAMPLES_PER_CLASS, mode="audio_only")
+    fake_dataset = DeepGuardDataset(real_dirs=[], fake_dirs=valid_fake, max_samples=SAMPLES_PER_CLASS, mode="audio_only")
     
     balanced_dataset = ConcatDataset([real_dataset, fake_dataset])
-    # Batch size 16 is safe here because audio tensors are small
     dataloader = DataLoader(balanced_dataset, batch_size=16, shuffle=True, num_workers=2)
 
     model = AudioOnlyDeepGuard().float().to(device)
@@ -137,46 +133,60 @@ def train_audio_model():
         try:
             target = model.module.expert if isinstance(model, nn.DataParallel) else model.expert
             target.load_state_dict(torch.load(PREV_MODEL_PATH, map_location=device))
-            print(f"✅ Memory Loaded from Phase {CURRENT_PHASE - 1}! Continuing evolution...")
+            print(f"✅ Memory Loaded from Phase {CURRENT_PHASE - 1}!")
         except Exception as e:
-            print(f"⚠️ Error loading previous phase memory: {e}")
+            print(f"⚠️ Error loading memory: {e}")
+
+    # ❄️ THE SOTA FEATURE EXTRACTOR FREEZE
+    print("\n❄️ Applying Fix Stack: Freezing Wav2Vec2 Feature Extractor...")
+    frozen_layers = 0
+    for name, param in model.named_parameters():
+        if "feature_extractor" in name or "feature_projection" in name or "conv" in name:
+            param.requires_grad = False
+            frozen_layers += 1
+    print(f"✅ Locked {frozen_layers} layers!\n")
 
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=LR)
-    
+    optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=LR)
     os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
 
     # ==========================================
-    # 🔥 PURE FLOAT32 TRAINING LOOP (ANTI-NaN)
+    # 🔥 GATEKEEPER TRAINING LOOP (ENTERPRISE GRADE)
     # ==========================================
     EPOCHS = 10
     for epoch in range(EPOCHS):
         model.train()
         loop = tqdm(dataloader, total=len(dataloader), leave=True)
         
-        for batch_idx, (video_rgb, flow, fft, audio, labels) in enumerate(loop):
+        # 🚀 FIX: Ignore dummy video variables with '_'
+        for batch_idx, (_, _, _, audio, labels) in enumerate(loop):
             
-            # 🚀 FLOAT32 FORCE: No Autocast/AMP used here to prevent Wav2Vec crashing
+            # 🛡️ GATEKEEPER CHECK 1: Strict 16kHz Shape Validation
+            if audio.shape[-1] != 16000:
+                continue
+                
+            # 🛡️ GATEKEEPER CHECK 2: Purity Check (Catch Corrupt/NaN audio early)
+            if torch.isnan(audio).any() or torch.isinf(audio).any():
+                continue
+
             audio = audio.float().to(device)
             labels = labels.float().to(device).view(-1, 1)
 
-            # EXTRA SANITIZER: Fallback safety against corrupt librosa outputs
-            audio = torch.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
+            # 🛡️ THE ONLY AUDIO FIX: Strict Clamping (No Fake Epsilon Noise)
+            audio = torch.clamp(audio, min=-1.0, max=1.0)
 
             optimizer.zero_grad()
-            
-            # Direct forward pass without autocast
             predictions = model(audio)
             
+            # 🛡️ GATEKEEPER CHECK 3: Final Model Output Safety
             if torch.isnan(predictions).any():
-                print(f"⚠️ NaN detected at batch {batch_idx}! (Skipping batch to save SOTA model)")
                 continue
                 
             loss = criterion(predictions, labels)
-            
-            # Standard backward pass (No Scaler required for pure Float32)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            
+            # Gradient Safety
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
             optimizer.step()
             
             loop.set_description(f"Epoch [{epoch+1}/{EPOCHS}]")

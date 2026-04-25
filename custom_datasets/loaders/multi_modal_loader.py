@@ -7,33 +7,30 @@ import random
 from torch.utils.data import Dataset
 
 class DeepGuardDataset(Dataset):
-    def __init__(self, real_dirs, fake_dirs, num_frames=16, max_samples=None):
+    # 🚀 FIX: Added 'mode' parameter for ultra-fast conditional loading
+    def __init__(self, real_dirs, fake_dirs, num_frames=16, max_samples=None, mode="multi"):
         self.num_frames = num_frames
+        self.mode = mode
         self.video_paths = []
         self.labels = []
         
         real_videos = []
         fake_videos = []
 
-        # 1. Collect Real Videos & Audio
         for d in real_dirs:
             if os.path.exists(d):
                 for root, _, files in os.walk(d):
                     for file in files:
-                        # 🚀 CHANGE 1: Added Audio Formats (.wav, .flac)
                         if file.endswith(('.mp4', '.avi', '.wav', '.flac')):
                             real_videos.append(os.path.join(root, file))
 
-        # 2. Collect Fake Videos & Audio
         for d in fake_dirs:
             if os.path.exists(d):
                 for root, _, files in os.walk(d):
                     for file in files:
-                        # 🚀 CHANGE 1: Added Audio Formats (.wav, .flac)
                         if file.endswith(('.mp4', '.avi', '.wav', '.flac')):
                             fake_videos.append(os.path.join(root, file))
 
-        # 3. Balancing / Sampling Logic
         if max_samples is not None:
             half_sample = max_samples // 2
             if len(real_videos) > half_sample:
@@ -41,7 +38,6 @@ class DeepGuardDataset(Dataset):
             if len(fake_videos) > half_sample:
                 fake_videos = random.sample(fake_videos, half_sample)
 
-        # 4. Final Merge with Float32 labels
         for vid in real_videos:
             self.video_paths.append(vid)
             self.labels.append(0.0) # REAL
@@ -50,7 +46,7 @@ class DeepGuardDataset(Dataset):
             self.video_paths.append(vid)
             self.labels.append(1.0) # FAKE
 
-        print(f"📦 Total Enterprise Dataset Loaded: {len(self.video_paths)} Files")
+        print(f"📦 Total Enterprise Dataset Loaded: {len(self.video_paths)} Files (Mode: {self.mode})")
 
     def __len__(self):
         return len(self.video_paths)
@@ -71,7 +67,6 @@ class DeepGuardDataset(Dataset):
         return np.array(frames)
 
     def extract_optical_flow(self, frames_np):
-        # Convert first two frames to gray for simple flow
         gray1 = cv2.cvtColor(frames_np[0], cv2.COLOR_RGB2GRAY)
         gray2 = cv2.cvtColor(frames_np[1], cv2.COLOR_RGB2GRAY)
         flow = cv2.calcOpticalFlowFarneback(gray1, gray2, None, 0.5, 3, 15, 3, 5, 1.2, 0)
@@ -87,64 +82,52 @@ class DeepGuardDataset(Dataset):
 
     def extract_audio(self, video_path):
         try:
-            # 1. Load Audio
+            # 1. Strict 16kHz Loading
             y, sr = librosa.load(video_path, sr=16000, duration=1.0)
             
-            # 2. 🚨 THE "SILENT KILLER" CHECK: Librosa kabhi NaN de deta hai corrupt video par
+            # 2. SOTA Purity Check: Koi hack nahi, seedha NaN return karo taake Gatekeeper drop kare
             if np.isnan(y).any() or np.isinf(y).any():
-                print(f"\n⚠️ CRITICAL WARNING: Librosa found NaN/Inf in file: {video_path}")
-                # Fauran NaN ko zero se replace karo aur noise daalo
-                y = np.nan_to_num(y) + (1e-5 * np.random.randn(len(y)))
+                return torch.full((16000,), float('nan')) 
 
-            # 3. Padding agar audio 1 second se kam ho
+            # 3. Pure Padding (Zeroes only, no noise)
             if len(y) < 16000:
                 y = np.pad(y, (0, 16000 - len(y)))
 
-            # 4. Final Cleanup: Ek bar aur confirm karein ke output saaf hai
-            tensor_audio = torch.tensor(y[:16000]).float()
-            tensor_audio = torch.nan_to_num(tensor_audio) # Final PyTorch level check
-            
-            return tensor_audio
+            return torch.tensor(y[:16000]).float()
             
         except Exception as e:
-            # Fallback agar file open hi na ho
-            # print(f"⚠️ Librosa failed on {video_path}: {e}") # Isko comment kiya hai taake warnings na ayen
-            noise = 1e-5 * np.random.randn(16000)
-            return torch.tensor(noise).float()
+            # Pura fail ho jaye toh bhi Gatekeeper ko handle karne do
+            return torch.full((16000,), float('nan'))
 
     def __getitem__(self, idx):
         file_path = self.video_paths[idx]
         label = self.labels[idx]
         
-        # 🚀 CHANGE 2: AUDIO-ONLY BYPASS ROUTE
-        if file_path.endswith(('.wav', '.flac')):
-            # Dummy tensors for Visual components
-            video_rgb = torch.zeros((self.num_frames, 3, 224, 224)).float()
-            flow_frames = torch.zeros((2, 224, 224)).float()
-            forensics_frames = torch.zeros((1, 224, 224)).float()
-            
-            # Asal Audio Extract
+        # 🚀 FIX: THE ULTRA-FAST AUDIO-ONLY BYPASS
+        if self.mode == "audio_only":
             audio_features = self.extract_audio(file_path)
-            
-            return (video_rgb, 
-                    flow_frames, 
-                    forensics_frames, 
+            # Empty tensors taake memory aur bandwidth zaya na ho
+            return (torch.empty(0), 
+                    torch.empty(0), 
+                    torch.empty(0), 
                     audio_features, 
                     torch.tensor(label, dtype=torch.float32))
 
-        # 🎬 NORMAL VIDEO PIPELINE
+        # 🎬 NORMAL VIDEO PIPELINE (For Multi-Modal Mode)
         else:
-            frames_np = self.extract_frames(file_path)
-            
-            # RGB Video Normalization
-            video_rgb = torch.tensor(frames_np).permute(0, 3, 1, 2).float() / 255.0
-            
-            # Experts Features
-            flow_frames = self.extract_optical_flow(frames_np)
-            forensics_frames = self.extract_fft(frames_np)
-            audio_features = self.extract_audio(file_path)
+            if file_path.endswith(('.wav', '.flac')):
+                # Agar multi mode mein audio file aajaye toh dummy frames dein
+                video_rgb = torch.zeros((self.num_frames, 3, 224, 224)).float()
+                flow_frames = torch.zeros((2, 224, 224)).float()
+                forensics_frames = torch.zeros((1, 224, 224)).float()
+                audio_features = self.extract_audio(file_path)
+            else:
+                frames_np = self.extract_frames(file_path)
+                video_rgb = torch.tensor(frames_np).permute(0, 3, 1, 2).float() / 255.0
+                flow_frames = self.extract_optical_flow(frames_np)
+                forensics_frames = self.extract_fft(frames_np)
+                audio_features = self.extract_audio(file_path)
 
-            # 🚀 Return with explicit float32 label tensor
             return (video_rgb, 
                     flow_frames, 
                     forensics_frames, 
