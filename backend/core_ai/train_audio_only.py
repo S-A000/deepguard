@@ -43,33 +43,40 @@ def train_audio_model():
     print(f"\n🎧 Audio-Only System Online! Training on: {device}")
 
     # ==========================================
-    # 🗺️ 4-PHASE DATASET ROUTING
+    # 🗺️ 4-PHASE DATASET ROUTING (AUDIO SOTA STRATEGY)
     # ==========================================
     if CURRENT_PHASE == 1:
-        print("🟢 PHASE 1: WARM-UP (FaceForensics++ Only)")
-        # 🚀 Agar aapne "clean_audio_data.py" use kiya hai, toh yahan Clean paths daal sakte hain
-        # e.g., "/kaggle/working/deepguard_clean_data/real"
-        REAL_DIRS = ["/kaggle/input/datasets/hungle3401/faceforensics/FF++/real"]
-        FAKE_DIRS = ["/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake"]
+        print("🟢 PHASE 1: WARM-UP (Pure Audio - Basic AI Voices)")
+        # Phase 1 mein hum thora aasaan aur clean data denge
+        REAL_DIRS = [
+            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Real",
+            "/kaggle/input/vctk-corpus-version-0-92/VCTK-Corpus/wav48"
+        ]
+        FAKE_DIRS = [
+            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Fake"
+        ]
         LR = 0.0001
         PREV_MODEL_PATH = None
         SAVE_PATH = "/kaggle/working/saved_models/production/audio_phase1.pth"
 
     elif CURRENT_PHASE == 2:
-        print("🟡 PHASE 2: BACKGROUND STABILITY (FF++ & Action Datasets)")
+        print("🟡 PHASE 2: ADVANCED AUDIO (Adding WaveFake Hard Architectures)")
+        # Phase 2 mein WaveFake ki mushkil AI aawazein add kar denge
         REAL_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
-            "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics400_5per/kinetics400_5per/train",
-            "/kaggle/input/datasets/pevogam/ucf101/UCF101/UCF-101",
-            "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo"
+            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Real",
+            "/kaggle/input/vctk-corpus-version-0-92/VCTK-Corpus/wav48"
         ]
-        FAKE_DIRS = ["/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake"]
+        FAKE_DIRS = [
+            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Fake",
+            "/kaggle/input/wavefake/generated_audio/common_voices_prompts_from_conform/generated"
+        ]
         LR = 0.00005
         PREV_MODEL_PATH = "/kaggle/working/saved_models/production/audio_phase1.pth"
         SAVE_PATH = "/kaggle/working/saved_models/production/audio_phase2.pth"
 
     elif CURRENT_PHASE == 3:
-        print("🟠 PHASE 3: THE HARD FAKES (Adding DFDC Enterprise Data)")
+        print("🟠 PHASE 3: CROSS-DOMAIN FAKES (Adding Video Datasets - FF++ & DFDC)")
+        # Phase 3 mein woh video datasets ayenge jin mein audio hai
         REAL_DIRS = [
             "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
             "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real"
@@ -161,7 +168,7 @@ def train_audio_model():
                 
             loss = criterion(predictions, labels)
             
-            # Standard backward pass (No Scaler)
+            # Standard backward pass (No Scaler required for pure Float32)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
