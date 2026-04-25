@@ -49,11 +49,11 @@ def train_audio_model():
         print("🟢 PHASE 1: WARM-UP (Pure Audio - Basic AI Voices)")
         # 🚀 Path updated perfectly according to your Kaggle Screenshots
         REAL_DIRS = [
-            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Real/Real",
-            "/kaggle/input/vctk-corpus-version-0-92/VCTK-Corpus/wav48"
+            "/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Real/Real",
+            "/kaggle/input/datasets/kynthesis/vctk-corpus/VCTK-Corpus/wav48"
         ]
         FAKE_DIRS = [
-            "/kaggle/input/speech-dataset-of-human-and-ai-generated/Fake/Fake"
+            "/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Fake/Fake"
         ]
         LR = 0.0001
         PREV_MODEL_PATH = None
