@@ -15,20 +15,22 @@ class DeepGuardDataset(Dataset):
         real_videos = []
         fake_videos = []
 
-        # 1. Collect Real Videos
+        # 1. Collect Real Videos & Audio
         for d in real_dirs:
             if os.path.exists(d):
                 for root, _, files in os.walk(d):
                     for file in files:
-                        if file.endswith(('.mp4', '.avi')):
+                        # 🚀 CHANGE 1: Added Audio Formats (.wav, .flac)
+                        if file.endswith(('.mp4', '.avi', '.wav', '.flac')):
                             real_videos.append(os.path.join(root, file))
 
-        # 2. Collect Fake Videos
+        # 2. Collect Fake Videos & Audio
         for d in fake_dirs:
             if os.path.exists(d):
                 for root, _, files in os.walk(d):
                     for file in files:
-                        if file.endswith(('.mp4', '.avi')):
+                        # 🚀 CHANGE 1: Added Audio Formats (.wav, .flac)
+                        if file.endswith(('.mp4', '.avi', '.wav', '.flac')):
                             fake_videos.append(os.path.join(root, file))
 
         # 3. Balancing / Sampling Logic
@@ -48,7 +50,7 @@ class DeepGuardDataset(Dataset):
             self.video_paths.append(vid)
             self.labels.append(1.0) # FAKE
 
-        print(f"📦 Total Enterprise Dataset Loaded: {len(self.video_paths)} Videos")
+        print(f"📦 Total Enterprise Dataset Loaded: {len(self.video_paths)} Files")
 
     def __len__(self):
         return len(self.video_paths)
@@ -90,7 +92,7 @@ class DeepGuardDataset(Dataset):
             
             # 2. 🚨 THE "SILENT KILLER" CHECK: Librosa kabhi NaN de deta hai corrupt video par
             if np.isnan(y).any() or np.isinf(y).any():
-                print(f"\n⚠️ CRITICAL WARNING: Librosa found NaN/Inf in video: {video_path}")
+                print(f"\n⚠️ CRITICAL WARNING: Librosa found NaN/Inf in file: {video_path}")
                 # Fauran NaN ko zero se replace karo aur noise daalo
                 y = np.nan_to_num(y) + (1e-5 * np.random.randn(len(y)))
 
@@ -106,27 +108,45 @@ class DeepGuardDataset(Dataset):
             
         except Exception as e:
             # Fallback agar file open hi na ho
-            print(f"⚠️ Librosa failed on {video_path}: {e}")
+            # print(f"⚠️ Librosa failed on {video_path}: {e}") # Isko comment kiya hai taake warnings na ayen
             noise = 1e-5 * np.random.randn(16000)
             return torch.tensor(noise).float()
 
     def __getitem__(self, idx):
-        video_path = self.video_paths[idx]
+        file_path = self.video_paths[idx]
         label = self.labels[idx]
         
-        frames_np = self.extract_frames(video_path)
-        
-        # RGB Video Normalization
-        video_rgb = torch.tensor(frames_np).permute(0, 3, 1, 2).float() / 255.0
-        
-        # Experts Features
-        flow_frames = self.extract_optical_flow(frames_np)
-        forensics_frames = self.extract_fft(frames_np)
-        audio_features = self.extract_audio(video_path)
+        # 🚀 CHANGE 2: AUDIO-ONLY BYPASS ROUTE
+        if file_path.endswith(('.wav', '.flac')):
+            # Dummy tensors for Visual components
+            video_rgb = torch.zeros((self.num_frames, 3, 224, 224)).float()
+            flow_frames = torch.zeros((2, 224, 224)).float()
+            forensics_frames = torch.zeros((1, 224, 224)).float()
+            
+            # Asal Audio Extract
+            audio_features = self.extract_audio(file_path)
+            
+            return (video_rgb, 
+                    flow_frames, 
+                    forensics_frames, 
+                    audio_features, 
+                    torch.tensor(label, dtype=torch.float32))
 
-        # 🚀 Return with explicit float32 label tensor
-        return (video_rgb, 
-                flow_frames, 
-                forensics_frames, 
-                audio_features, 
-                torch.tensor(label, dtype=torch.float32))
+        # 🎬 NORMAL VIDEO PIPELINE
+        else:
+            frames_np = self.extract_frames(file_path)
+            
+            # RGB Video Normalization
+            video_rgb = torch.tensor(frames_np).permute(0, 3, 1, 2).float() / 255.0
+            
+            # Experts Features
+            flow_frames = self.extract_optical_flow(frames_np)
+            forensics_frames = self.extract_fft(frames_np)
+            audio_features = self.extract_audio(file_path)
+
+            # 🚀 Return with explicit float32 label tensor
+            return (video_rgb, 
+                    flow_frames, 
+                    forensics_frames, 
+                    audio_features, 
+                    torch.tensor(label, dtype=torch.float32))
