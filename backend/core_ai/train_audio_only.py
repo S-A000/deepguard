@@ -53,8 +53,8 @@ def train_audio_model():
         ]
         FAKE_DIRS = [
             "/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Fake/Fake",
-            "/kaggle/input/wavefake/generated_audio/ljspeech_melgan",
-            "/kaggle/input/wavefake/generated_audio/ljspeech_parallel_wavegan"
+            "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_melgan",
+            "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_parallel_wavegan"
         ]
         LR = 0.00005
         PREV_MODEL_PATH = None
