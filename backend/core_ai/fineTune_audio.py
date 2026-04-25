@@ -48,13 +48,13 @@ def train_audio_model():
     if CURRENT_PHASE == 1:
         print("🟢 PHASE 1: WARM-UP (Basic AI Voices)")
         REAL_DIRS = [
-            "/kaggle/input/speech-dataset-of-human-and-ai-generated-voices/Real/Real",
-            "/kaggle/input/vctk-corpus/VCTK-Corpus/wav48"
+             "/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Real/Real",
+            "/kaggle/input/datasets/kynthesis/vctk-corpus/VCTK-Corpus/wav48"
         ]
         FAKE_DIRS = [
-            "/kaggle/input/speech-dataset-of-human-and-ai-generated-voices/Fake/Fake",
-            "/kaggle/input/wavefake-test/generated_audio/ljspeech_melgan",
-            "/kaggle/input/wavefake-test/generated_audio/ljspeech_parallel_wavegan"
+            "/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Fake/Fake",
+            "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_melgan",
+            "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_parallel_wavegan"
         ]
         # 🐢 Micro LRs for Fine-tuning existing 0.67 model
         LR_BACKBONE, LR_CLASSIFIER = 5e-7, 5e-6 
