@@ -53,12 +53,11 @@ def train_audio_model():
         ]
         # 🚀 Path Fix: Removed 'datasets/' and added exact Kaggle slugs
         FAKE_DIRS = [
-            "/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Fake/Fake",
             "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_melgan",
             "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_parallel_wavegan"
         ]
         LR_BACKBONE = 0.000001 # Micro LR for Backbone (NaN protection)
-        LR_CLASSIFIER = 0.00005 
+        LR_CLASSIFIER = 0.00001 
         PREV_MODEL_PATH = None
         SAVE_PATH = "/kaggle/working/saved_models/production/audio_phase1.pth"
 
