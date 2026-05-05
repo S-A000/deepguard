@@ -11,9 +11,6 @@ from sklearn.metrics import f1_score
 import numpy as np
 
 warnings.filterwarnings("ignore")
-# P100 GPU ke liye memory optimization
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-torch.backends.cudnn.benchmark = True 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.abspath(os.path.join(current_dir, "../../"))
@@ -22,6 +19,9 @@ sys.path.append(root_dir)
 from backend.core_ai.models.branch_d_audio import AudioExpert
 from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 
+# ==========================================
+# 🎛️ PHASE CONTROLLER (MASTER SWITCH)
+# ==========================================
 CURRENT_PHASE = 1  
 
 # ==========================================
@@ -30,7 +30,6 @@ CURRENT_PHASE = 1
 def augment_waveform(audio):
     if torch.rand(1).item() > 0.5:
         time_len = audio.shape[-1]
-        # Sirf tab augment karein jab audio reasonable length ka ho (Crash Prevention)
         if time_len > 100: 
             max_t = max(1, time_len // 10)
             t = torch.randint(1, max_t + 1, (1,)).item()
@@ -79,7 +78,6 @@ def train_audio_model():
         
         LR_BACKBONE, LR_CLASSIFIER = 1e-6, 1e-5 
         
-        # ⚠️ Yahan apni 0.67 wali file ka Asal Path check kar lein
         PREV_MODEL_PATH = "/kaggle/input/datasets/abdullahpy/audioweights/audio_phase1.pth" 
         SAVE_PATH = "/kaggle/working/saved_models/production/audio_phase1_v2.pth"
     else: return
@@ -101,17 +99,13 @@ def train_audio_model():
 
     print(f"⚖️ Dataset Split: Train ({train_size}) | Validation ({val_size})")
     
-    # P100 ke liye Batch Size 8 bilkul perfect hai
     train_loader = DataLoader(train_ds, batch_size=8, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_ds, batch_size=8, shuffle=False, num_workers=2)
 
-    # 🚀 DATA-PARALLEL REMOVED (Strictly Single GPU)
     model = AudioOnlyDeepGuard().float().to(device)
 
-    # Load Previous Backbone
     if PREV_MODEL_PATH and os.path.exists(PREV_MODEL_PATH):
         try:
-            # Single GPU loading (No .module needed)
             model.expert.load_state_dict(torch.load(PREV_MODEL_PATH, map_location=device), strict=False)
             print(f"✅ Loaded Previous Backbone from {PREV_MODEL_PATH}")
         except Exception as e:
@@ -127,7 +121,6 @@ def train_audio_model():
         else:
             param.requires_grad = False
 
-    # Optimizer (No .module needed)
     optimizer = optim.AdamW([
         {'params': model.expert.parameters(), 'lr': LR_BACKBONE},
         {'params': model.classifier.parameters(), 'lr': LR_CLASSIFIER}
@@ -150,19 +143,17 @@ def train_audio_model():
         for batch_idx, (_, _, _, audio, labels) in enumerate(train_loop):
             if torch.isnan(audio).any(): continue
 
-            audio, labels = audio.to(device), labels.to(device).view(-1, 1)
-            
-            # Sample-level Normalization
+            # 🛠️ CPU Normalization & Augmentation (P100 Kernel Fix)
             audio = (audio - audio.mean(dim=-1, keepdim=True)) / (audio.std(dim=-1, keepdim=True) + 1e-8)
             audio = torch.clamp(audio, -1.0, 1.0)
-
-            # Bulletproof Augmentation & Contiguous Memory Fix
             audio = augment_waveform(audio)
-            audio = audio.contiguous() # 👈 YEH CRASH SE BACHAYEGA
+
+            # Move to GPU safely
+            audio = audio.contiguous().to(device)
+            labels = labels.to(device).view(-1, 1)
 
             optimizer.zero_grad()
             
-            # Forward Pass
             preds = model(audio)
             
             if torch.isnan(preds).any(): continue
@@ -188,12 +179,14 @@ def train_audio_model():
         
         with torch.no_grad():
             for _, _, _, audio, labels in val_loader:
-                audio, labels = audio.to(device), labels.to(device).view(-1, 1)
                 
-                # Normalization (No augmentation in Validation)
+                # 🛠️ CPU Normalization (P100 Kernel Fix)
                 audio = (audio - audio.mean(dim=-1, keepdim=True)) / (audio.std(dim=-1, keepdim=True) + 1e-8)
                 audio = torch.clamp(audio, -1.0, 1.0)
-                audio = audio.contiguous()
+                
+                # Move to GPU safely
+                audio = audio.contiguous().to(device)
+                labels = labels.to(device).view(-1, 1)
 
                 outputs = model(audio)
                 loss = criterion(outputs, labels)
@@ -210,10 +203,9 @@ def train_audio_model():
         print(f"📊 Epoch [{epoch+1}/{EPOCHS}] Stats:")
         print(f"   -> Val Loss: {avg_val_loss:.4f} | Val F1: {val_f1:.4f}")
 
-        # Save Full Model State (Expert + Classifier)
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
-            torch.save(model.state_dict(), SAVE_PATH) # Single GPU save format
+            torch.save(model.state_dict(), SAVE_PATH)
             print(f"   🌟 New Best Model Saved! F1: {val_f1:.4f}")
 
     print(f"\n✅ Training Complete! Best Val F1: {best_val_f1:.4f}")
