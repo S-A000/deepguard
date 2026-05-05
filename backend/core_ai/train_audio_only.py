@@ -23,7 +23,7 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # 🎛️ PHASE CONTROLLER (MASTER SWITCH)
 # ==========================================
 # Phase badalney ke liye sirf is number ko change karein (1, 2, 3, or 4)
-CURRENT_PHASE = 1  
+CURRENT_PHASE = 2 
 
 # ✅ UPDATE 3: Restored augmentation function
 def augment_waveform(audio):
@@ -82,8 +82,10 @@ def train_audio_model():
 
     elif CURRENT_PHASE == 2:
         print("🟡 PHASE 2: ADVANCED AUDIO (Multi-band MelGAN)")
-        REAL_DIRS = ["/kaggle/input/speech-dataset-of-human-and-ai-generated-voices/Real/Real"]
-        FAKE_DIRS = ["/kaggle/input/wavefake-test/generated_audio/ljspeech_multi_band_melgan"]
+        REAL_DIRS = ["/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Real/Real"]
+        FAKE_DIRS = ["/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_hifiGAN",
+                     "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/jsut_parallel_wavegan",
+                     "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_waveglow"]
         LR_BACKBONE, LR_CLASSIFIER = 1e-6, 1e-5
         PREV_MODEL_PATH = "/kaggle/working/saved_models/production/audio_phase1.pth"
         SAVE_PATH = "/kaggle/working/saved_models/production/audio_phase2.pth"
