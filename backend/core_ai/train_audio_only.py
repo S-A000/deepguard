@@ -115,7 +115,7 @@ PHASE_CONFIGS = {
             
         ],
         "fake_dirs": [
-            /kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake,
+            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake",
         ],
         "max_samples": 30000,
         "epochs": 7,
