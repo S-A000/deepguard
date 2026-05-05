@@ -82,7 +82,7 @@ def train_audio_model():
         # 🚀 POINT 3: Better LRs (Freezing with extra steps fixed)
         LR_BACKBONE, LR_CLASSIFIER = 1e-6, 1e-5 
         
-        PREV_MODEL_PATH = "/kaggle/input/deepguard-weights-v1/audio_phase1.pth" 
+        PREV_MODEL_PATH = "/kaggle/input/datasets/abdullahpy/audioweights/audio_phase1.pth" 
         SAVE_PATH = "/kaggle/working/saved_models/production/audio_phase1_v2.pth"
     else: return
 
