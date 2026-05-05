@@ -82,7 +82,8 @@ def train_audio_model():
 
     elif CURRENT_PHASE == 2:
         print("🟡 PHASE 2: ADVANCED AUDIO (Multi-band MelGAN)")
-        REAL_DIRS = ["/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Real/Real"]
+        REAL_DIRS = ["/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Real/Real",
+                     "/kaggle/input/datasets/kynthesis/vctk-corpus/VCTK-Corpus/wav48"]
         FAKE_DIRS = ["/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_hifiGAN",
                      "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/jsut_parallel_wavegan",
                      "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_waveglow"]
