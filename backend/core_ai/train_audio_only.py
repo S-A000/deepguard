@@ -1,5 +1,5 @@
 """
-DeepGuard - Audio Expert Training Script  (v2 — Kaggle Ready)
+DeepGuard - Audio Expert Training Script  (v2.1 — Path Fix & Kaggle Optimized)
 =============================================================================
 Strategy:
   Phase 1 → Audio-only datasets (wavefake, Speech Dataset, VCTK)
@@ -15,6 +15,7 @@ Fixes applied:
 """
 
 import os
+import sys
 import argparse
 import torch
 import torch.nn as nn
@@ -24,8 +25,32 @@ from sklearn.metrics import roc_auc_score, f1_score, classification_report
 import numpy as np
 from tqdm import tqdm
 
-# Make sure dataset.py is in the same folder as this script in Kaggle working directory
-from custom_datasets import DeepGuardDataset
+# ══════════════════════════════════════════════════════════════════════════════
+# 🛠️ SYSTEM PATH INJECTION (The "ModuleNotFoundError" Fix)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Script ki apni location maloom karein
+current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+
+# Project ki main root (deepguard folder) tak pahuchein
+# Agar aap backend/core_ai mein hain, toh 3 levels oopar root hai
+project_root = os.path.abspath(os.path.join(current_dir, "../../../"))
+
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+    print(f"✅ Project Root Added to System Path: {project_root}")
+
+# Ab Dataset loader ko import karein
+try:
+    from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
+    print("✅ Successfully imported DeepGuardDataset from custom_datasets")
+except ImportError:
+    try:
+        from dataset import DeepGuardDataset
+        print("✅ Successfully imported DeepGuardDataset from local dataset.py")
+    except ImportError:
+        print("❌ CRITICAL ERROR: Could not find DeepGuardDataset. Check your folder structure!")
+        sys.exit(1)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -46,19 +71,16 @@ class AudioExpert(nn.Module):
                 param.requires_grad = False
 
             total_layers  = len(self.wav2vec.encoder.layers)
-            unfreeze_from = total_layers - 4  # Layers 8, 9, 10, 11
+            unfreeze_from = total_layers - 4 
             for i in range(unfreeze_from, total_layers):
                 for param in self.wav2vec.encoder.layers[i].parameters():
                     param.requires_grad = True
 
             trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
-            print(f"  🧊 Phase 1 freeze: last 4/{total_layers} transformer layers trainable")
-            print(f"  📊 Trainable Wav2Vec params: {trainable:,}")
-
+            print(f"  🧊 Phase 1: Last 4/{total_layers} transformer layers trainable")
         else:
             trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
-            print(f"  🔥 Phase 2: all transformer layers trainable")
-            print(f"  📊 Trainable Wav2Vec params: {trainable:,}")
+            print(f"  🔥 Phase 2: All transformer layers trainable")
 
         self.fc = nn.Linear(self.wav2vec.config.hidden_size, embed_dim)
 
@@ -112,10 +134,9 @@ PHASE_CONFIGS = {
         "description": "Audio from deepfake videos — domain shift training",
         "real_dirs": [
             "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real"
-            
         ],
         "fake_dirs": [
-            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake",
+            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake"
         ],
         "max_samples": 30000,
         "epochs": 7,
@@ -150,6 +171,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
     all_preds, all_labels = [], []
 
     for batch in tqdm(loader, desc="  Training", leave=False):
+        # audio_only mode → (_, _, _, audio, labels)
         _, _, _, audio, labels = batch
 
         bad_mask   = torch.isnan(audio).any(dim=1) | torch.isinf(audio).any(dim=1)
@@ -160,7 +182,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
         audio  = audio[valid_mask].to(device)
         labels = labels[valid_mask].to(device)
-        audio = normalize_audio(audio)
+        audio  = normalize_audio(audio)
 
         optimizer.zero_grad()
         logits = model(audio)
@@ -170,7 +192,6 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
             continue
 
         loss = criterion(logits, labels)
-
         if torch.isnan(loss) or torch.isinf(loss):
             skipped += len(audio)
             continue
@@ -183,9 +204,6 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
         preds = torch.sigmoid(logits).detach().cpu().numpy()
         all_preds.extend(preds)
         all_labels.extend(labels.cpu().numpy())
-
-    if skipped > 0:
-        print(f"  ⚠️  Skipped {skipped} samples (NaN/Inf detected)")
 
     avg_loss = total_loss / max(len(loader), 1)
     binary_preds = (np.array(all_preds) > DECISION_THRESHOLD).astype(int)
@@ -202,7 +220,6 @@ def validate(model, loader, criterion, device):
 
     for batch in tqdm(loader, desc="  Validating", leave=False):
         _, _, _, audio, labels = batch
-
         bad_mask   = torch.isnan(audio).any(dim=1) | torch.isinf(audio).any(dim=1)
         valid_mask = ~bad_mask
         if valid_mask.sum() == 0:
@@ -211,17 +228,15 @@ def validate(model, loader, criterion, device):
 
         audio  = audio[valid_mask].to(device)
         labels = labels[valid_mask].to(device)
-        audio = normalize_audio(audio)
+        audio  = normalize_audio(audio)
 
         logits = model(audio)
-
         if torch.isnan(logits).any() or torch.isinf(logits).any():
             skipped += len(audio)
             continue
 
         loss = criterion(logits, labels)
         total_loss += loss.item()
-
         probs = torch.sigmoid(logits).cpu().numpy()
         all_probs.extend(probs)
         all_labels.extend(labels.cpu().numpy())
@@ -254,7 +269,7 @@ def train_phase(phase: int, checkpoint_path: str = None):
     print(f"  Device : {device}")
     print(f"{'='*60}\n")
 
-    # Filter paths that actually exist in Kaggle
+    # Filter paths that actually exist
     real_paths = [d for d in cfg["real_dirs"] if os.path.exists(d)]
     fake_paths = [d for d in cfg["fake_dirs"] if os.path.exists(d)]
 
@@ -273,12 +288,8 @@ def train_phase(phase: int, checkpoint_path: str = None):
         generator=torch.Generator().manual_seed(42)
     )
 
-    train_loader = DataLoader(train_ds, batch_size=32, shuffle=True,
-                              num_workers=2, pin_memory=True)
-    val_loader   = DataLoader(val_ds,   batch_size=32, shuffle=False,
-                              num_workers=2, pin_memory=True)
-
-    print(f"📦 Train: {len(train_ds)} | Val: {len(val_ds)}\n")
+    train_loader = DataLoader(train_ds, batch_size=32, shuffle=True, num_workers=2, pin_memory=True)
+    val_loader   = DataLoader(val_ds,   batch_size=32, shuffle=False, num_workers=2, pin_memory=True)
 
     model = AudioClassifier(embed_dim=256, phase=phase).to(device)
 
@@ -287,24 +298,17 @@ def train_phase(phase: int, checkpoint_path: str = None):
         ckpt = torch.load(checkpoint_path, map_location=device)
         model.load_state_dict(ckpt["model_state_dict"], strict=False)
 
-    optimizer = torch.optim.AdamW(
-        filter(lambda p: p.requires_grad, model.parameters()),
-        lr=cfg["lr"], weight_decay=1e-4
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=cfg["epochs"], eta_min=1e-7
-    )
+    optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=cfg["lr"], weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg["epochs"], eta_min=1e-7)
 
-    criterion = nn.BCEWithLogitsLoss(
-        pos_weight=torch.tensor([1.5]).to(device)
-    )
+    # FIX 4: Class imbalance guard
+    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([1.5]).to(device))
 
     best_auc  = 0.0
     save_path = f"/kaggle/working/audio_expert_phase{phase}.pth"
 
     for epoch in range(1, cfg["epochs"] + 1):
         print(f"Epoch [{epoch}/{cfg['epochs']}]")
-
         train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
         val_loss, val_acc, val_auc, val_f1, true_labels, pred_labels = validate(model, val_loader, criterion, device)
         scheduler.step()
@@ -314,24 +318,15 @@ def train_phase(phase: int, checkpoint_path: str = None):
 
         if val_auc > best_auc:
             best_auc = val_auc
-            torch.save({
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "val_auc": val_auc,
-                "phase": phase,
-            }, save_path)
+            torch.save({"epoch": epoch, "model_state_dict": model.state_dict(), "val_auc": val_auc, "phase": phase}, save_path)
             print(f"  ✅ Best model saved → {save_path}\n")
-
-    print(f"\nFinal Classification Report (Phase {phase}):")
-    print(classification_report(true_labels, pred_labels, target_names=["REAL", "FAKE"], digits=4))
 
     return save_path
 
 
 if __name__ == "__main__":
-    # Note: Kaggle notebooks don't always support argparse well in cells.
-    # You can set these variables manually or use sys.argv simulation.
-    PHASE_TO_RUN = 1  # 👈 Phase badalney ke liye yahan change karein (1 or 2)
+    # ⚠️ MANUALLY SET PHASE HERE FOR KAGGLE
+    PHASE_TO_RUN = 1 
     
     ckpt_in = None
     if PHASE_TO_RUN == 2:
