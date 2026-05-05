@@ -1,239 +1,341 @@
+"""
+DeepGuard - Audio Expert Training Script  (v2 — Kaggle Ready)
+=============================================================================
+Strategy:
+  Phase 1 → Audio-only datasets (wavefake, Speech Dataset, VCTK)
+  Phase 2 → DFDC video datasets (audio extracted from videos)
+
+Fixes applied:
+  [FIX 1] AMP removed for Wav2Vec2 stability
+  [FIX 2] Per-sample audio normalization
+  [FIX 3] NaN/Inf guards on audio, logits, and loss
+  [FIX 4] BCEWithLogitsLoss pos_weight=1.5
+  [FIX 5] Decision threshold = 0.4
+  [FIX 6] Phase-aware layer freezing
+"""
+
 import os
-import sys
+import argparse
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, ConcatDataset, random_split
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.utils.data import DataLoader
+from transformers import Wav2Vec2Model
+from sklearn.metrics import roc_auc_score, f1_score, classification_report
+import numpy as np
 from tqdm import tqdm
-import warnings
-from sklearn.metrics import f1_score
 
-# System Performance & Safety Configurations
-warnings.filterwarnings("ignore")
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-torch.set_num_threads(4) 
+# Make sure dataset.py is in the same folder as this script in Kaggle working directory
+from dataset import DeepGuardDataset
 
-current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
-root_dir = os.path.abspath(os.path.join(current_dir, "../../"))
-if root_dir not in sys.path:
-    sys.path.append(root_dir)
 
-from backend.core_ai.models.branch_d_audio import AudioExpert
-from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
+# ══════════════════════════════════════════════════════════════════════════════
+# 1.  MODEL DEFINITION
+# ══════════════════════════════════════════════════════════════════════════════
 
-# ==========================================
-# 🎛️ PHASE CONTROLLER (MASTER SWITCH)
-# ==========================================
-# 1: Scratch Base | 2: Advanced Audio | 3: Cross-Domain | 4: Future Threats
-CURRENT_PHASE = 1  
+class AudioExpert(nn.Module):
+    def __init__(self, embed_dim: int = 256, phase: int = 1):
+        super().__init__()
+        self.wav2vec = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
 
-def augment_waveform(audio):
-    """SOTA Augmentation for robust learning"""
-    if torch.rand(1).item() > 0.5:
-        time_len = audio.shape[-1]
-        if time_len > 500:
-            max_t = max(1, time_len // 8)
-            t = torch.randint(1, max_t + 1, (1,)).item()
-            t0 = torch.randint(0, max(1, time_len - t), (1,)).item()
-            audio[..., t0:t0+t] = 0 
-    return audio
+        # FIX 6: Phase-aware layer freezing
+        for param in self.wav2vec.feature_extractor.parameters():
+            param.requires_grad = False
 
-class AudioOnlyDeepGuard(nn.Module):
-    """Standard DeepGuard GELU Architecture"""
-    def __init__(self, embed_dim=256):
-        super(AudioOnlyDeepGuard, self).__init__()
-        self.expert = AudioExpert(embed_dim=embed_dim)
+        if phase == 1:
+            for param in self.wav2vec.encoder.parameters():
+                param.requires_grad = False
+
+            total_layers  = len(self.wav2vec.encoder.layers)
+            unfreeze_from = total_layers - 4  # Layers 8, 9, 10, 11
+            for i in range(unfreeze_from, total_layers):
+                for param in self.wav2vec.encoder.layers[i].parameters():
+                    param.requires_grad = True
+
+            trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+            print(f"  🧊 Phase 1 freeze: last 4/{total_layers} transformer layers trainable")
+            print(f"  📊 Trainable Wav2Vec params: {trainable:,}")
+
+        else:
+            trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+            print(f"  🔥 Phase 2: all transformer layers trainable")
+            print(f"  📊 Trainable Wav2Vec params: {trainable:,}")
+
+        self.fc = nn.Linear(self.wav2vec.config.hidden_size, embed_dim)
+
+    def forward(self, audio_waveforms: torch.Tensor) -> torch.Tensor:
+        outputs = self.wav2vec(audio_waveforms)
+        pooled  = torch.mean(outputs.last_hidden_state, dim=1)
+        return self.fc(pooled)
+
+
+class AudioClassifier(nn.Module):
+    def __init__(self, embed_dim: int = 256, phase: int = 1):
+        super().__init__()
+        self.expert = AudioExpert(embed_dim=embed_dim, phase=phase)
         self.classifier = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.LayerNorm(256),
-            nn.GELU(),
+            nn.LayerNorm(embed_dim),
             nn.Dropout(0.3),
-            nn.Linear(256, 128),
-            nn.LayerNorm(128),
+            nn.Linear(embed_dim, 64),
             nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(128, 1)
+            nn.Linear(64, 1),
         )
 
-    def forward(self, audio_waveforms):
-        features = self.expert(audio_waveforms)
-        return self.classifier(features)
+    def forward(self, audio_waveforms: torch.Tensor) -> torch.Tensor:
+        emb    = self.expert(audio_waveforms)
+        logits = self.classifier(emb)
+        return logits.squeeze(1)
 
-def train_audio_model():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # ==========================================================
-    # 🗺️ DYNAMIC PHASE ROUTING (THE BRAIN OF THE SCRIPT)
-    # ==========================================================
-    
-    # Common Master Real Base (Har phase mein Real data ka balance hona zaroori hai)
-    MASTER_REAL = [
-        "/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Real/Real",
-        "/kaggle/input/datasets/kynthesis/vctk-corpus/VCTK-Corpus/wav48"
-    ]
 
-    if CURRENT_PHASE == 1:
-        print("🟢 PHASE 1: BUILDING MASTER BASE (Scratch Training)")
-        REAL_DIRS = MASTER_REAL
-        FAKE_DIRS = [
+# ══════════════════════════════════════════════════════════════════════════════
+# 2.  DATASET PHASE CONFIGS (KAGGLE UPDATED PATHS)
+# ══════════════════════════════════════════════════════════════════════════════
+
+PHASE_CONFIGS = {
+    1: {
+        "name": "Audio-Only Pre-Training",
+        "description": "Pure audio datasets — teaches real vs fake speech",
+        "real_dirs": [
+            "/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Real/Real",
+            "/kaggle/input/datasets/kynthesis/vctk-corpus/VCTK-Corpus/wav48"
+        ],
+        "fake_dirs": [
             "/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Fake/Fake",
             "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_melgan",
             "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_parallel_wavegan"
-        ]
-        LR_BACKBONE, LR_CLASSIFIER = 2e-5, 2e-4
-        PREV_MODEL_PATH = None
-        SAVE_PATH = "/kaggle/working/saved_models/production/audio_phase1.pth"
-        WARMUP_EPOCHS = 2
+        ],
+        "max_samples": 20000,
+        "epochs": 10,
+        "lr": 2e-5,
+    },
+    2: {
+        "name": "DFDC Audio Fine-Tuning",
+        "description": "Audio from deepfake videos — domain shift training",
+        "real_dirs": [
+            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real"
+            
+        ],
+        "fake_dirs": [
+            /kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake,
+        ],
+        "max_samples": 30000,
+        "epochs": 7,
+        "lr": 5e-6,
+    },
+}
 
-    elif CURRENT_PHASE == 2:
-        print("🟡 PHASE 2: ADVANCED AUDIO (HiFi-GAN & WaveGlow)")
-        REAL_DIRS = MASTER_REAL
-        FAKE_DIRS = [
-            "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_hifiGAN",
-            "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/jsut_parallel_wavegan",
-            "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_waveglow"
-        ]
-        LR_BACKBONE, LR_CLASSIFIER = 5e-6, 5e-5 # Lower LR for retention
-        PREV_MODEL_PATH = "/kaggle/working/saved_models/production/audio_phase1.pth"
-        SAVE_PATH = "/kaggle/working/saved_models/production/audio_phase2.pth"
-        WARMUP_EPOCHS = 1
+DECISION_THRESHOLD = 0.4
 
-    elif CURRENT_PHASE == 3:
-        print("🟠 PHASE 3: CROSS-DOMAIN (Video-extracted Audio)")
-        REAL_DIRS = ["/kaggle/input/faceforensics/FF++/real"] + MASTER_REAL
-        FAKE_DIRS = [
-            "/kaggle/input/faceforensics/FF++/fake",
-            "/kaggle/input/dfdc-part-14/fake"
-        ]
-        LR_BACKBONE, LR_CLASSIFIER = 2e-6, 2e-5
-        PREV_MODEL_PATH = "/kaggle/working/saved_models/production/audio_phase2.pth"
-        SAVE_PATH = "/kaggle/working/saved_models/production/audio_phase3.pth"
-        WARMUP_EPOCHS = 1
 
-    elif CURRENT_PHASE == 4:
-        print("🔴 PHASE 4: FUTURE THREATS (SoraGen & Custom)")
-        REAL_DIRS = MASTER_REAL
-        FAKE_DIRS = ["/kaggle/input/soragenvid/fake"]
-        LR_BACKBONE, LR_CLASSIFIER = 1e-6, 1e-5
-        PREV_MODEL_PATH = "/kaggle/working/saved_models/production/audio_phase3.pth"
-        SAVE_PATH = "/kaggle/working/saved_models/production/audio_FINAL.pth"
-        WARMUP_EPOCHS = 1
+# ══════════════════════════════════════════════════════════════════════════════
+# 3.  AUDIO NORMALIZATION HELPER
+# ══════════════════════════════════════════════════════════════════════════════
 
-    else:
-        print("❌ Invalid Phase Selection!")
-        return
+def normalize_audio(audio: torch.Tensor) -> torch.Tensor:
+    mean  = audio.mean(dim=-1, keepdim=True)
+    std   = audio.std(dim=-1, keepdim=True)
+    std   = torch.where(std < 1e-6, torch.ones_like(std), std)
+    audio = (audio - mean) / std
+    audio = torch.clamp(audio, -3.0, 3.0)
+    return audio
 
-    # ==========================================
-    # 🧠 DATA & MODEL INITIALIZATION
-    # ==========================================
-    valid_real = [d for d in REAL_DIRS if os.path.exists(d)]
-    valid_fake = [d for d in FAKE_DIRS if os.path.exists(d)]
-    
-    fake_ds = DeepGuardDataset(real_dirs=[], fake_dirs=valid_fake, max_samples=None, mode="audio_only")
-    num_fake = len(fake_ds)
-    real_ds = DeepGuardDataset(real_dirs=valid_real, fake_dirs=[], max_samples=num_fake, mode="audio_only")
-    
-    full_dataset = ConcatDataset([real_ds, fake_ds])
-    val_size = int(0.15 * len(full_dataset))
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 4.  TRAINING + VALIDATION LOOPS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def train_one_epoch(model, loader, optimizer, criterion, device):
+    model.train()
+    total_loss = 0.0
+    skipped    = 0
+    all_preds, all_labels = [], []
+
+    for batch in tqdm(loader, desc="  Training", leave=False):
+        _, _, _, audio, labels = batch
+
+        bad_mask   = torch.isnan(audio).any(dim=1) | torch.isinf(audio).any(dim=1)
+        valid_mask = ~bad_mask
+        if valid_mask.sum() == 0:
+            skipped += len(audio)
+            continue
+
+        audio  = audio[valid_mask].to(device)
+        labels = labels[valid_mask].to(device)
+        audio = normalize_audio(audio)
+
+        optimizer.zero_grad()
+        logits = model(audio)
+
+        if torch.isnan(logits).any() or torch.isinf(logits).any():
+            skipped += len(audio)
+            continue
+
+        loss = criterion(logits, labels)
+
+        if torch.isnan(loss) or torch.isinf(loss):
+            skipped += len(audio)
+            continue
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        total_loss += loss.item()
+        preds = torch.sigmoid(logits).detach().cpu().numpy()
+        all_preds.extend(preds)
+        all_labels.extend(labels.cpu().numpy())
+
+    if skipped > 0:
+        print(f"  ⚠️  Skipped {skipped} samples (NaN/Inf detected)")
+
+    avg_loss = total_loss / max(len(loader), 1)
+    binary_preds = (np.array(all_preds) > DECISION_THRESHOLD).astype(int)
+    acc = (binary_preds == np.array(all_labels)).mean()
+    return avg_loss, acc
+
+
+@torch.no_grad()
+def validate(model, loader, criterion, device):
+    model.eval()
+    total_loss = 0.0
+    skipped    = 0
+    all_probs, all_labels = [], []
+
+    for batch in tqdm(loader, desc="  Validating", leave=False):
+        _, _, _, audio, labels = batch
+
+        bad_mask   = torch.isnan(audio).any(dim=1) | torch.isinf(audio).any(dim=1)
+        valid_mask = ~bad_mask
+        if valid_mask.sum() == 0:
+            skipped += len(audio)
+            continue
+
+        audio  = audio[valid_mask].to(device)
+        labels = labels[valid_mask].to(device)
+        audio = normalize_audio(audio)
+
+        logits = model(audio)
+
+        if torch.isnan(logits).any() or torch.isinf(logits).any():
+            skipped += len(audio)
+            continue
+
+        loss = criterion(logits, labels)
+        total_loss += loss.item()
+
+        probs = torch.sigmoid(logits).cpu().numpy()
+        all_probs.extend(probs)
+        all_labels.extend(labels.cpu().numpy())
+
+    avg_loss   = total_loss / max(len(loader), 1)
+    all_probs  = np.array(all_probs)
+    all_labels = np.array(all_labels)
+
+    binary_preds = (all_probs > DECISION_THRESHOLD).astype(int)
+    acc = (binary_preds == all_labels).mean()
+
+    try:
+        auc = roc_auc_score(all_labels, all_probs)
+    except ValueError:
+        auc = 0.0
+
+    f1 = f1_score(all_labels, binary_preds, zero_division=0)
+    return avg_loss, acc, auc, f1, all_labels, binary_preds
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 5.  MAIN TRAINING FUNCTION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def train_phase(phase: int, checkpoint_path: str = None):
+    cfg    = PHASE_CONFIGS[phase]
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"\n{'='*60}")
+    print(f"  DeepGuard Audio Training — Phase {phase}: {cfg['name']}")
+    print(f"  Device : {device}")
+    print(f"{'='*60}\n")
+
+    # Filter paths that actually exist in Kaggle
+    real_paths = [d for d in cfg["real_dirs"] if os.path.exists(d)]
+    fake_paths = [d for d in cfg["fake_dirs"] if os.path.exists(d)]
+
+    full_dataset = DeepGuardDataset(
+        real_dirs   = real_paths,
+        fake_dirs   = fake_paths,
+        num_frames  = 16,
+        max_samples = cfg["max_samples"],
+        mode        = "audio_only",
+    )
+
+    val_size   = int(0.2 * len(full_dataset))
     train_size = len(full_dataset) - val_size
-    train_ds, val_ds = random_split(full_dataset, [train_size, val_size])
+    train_ds, val_ds = torch.utils.data.random_split(
+        full_dataset, [train_size, val_size],
+        generator=torch.Generator().manual_seed(42)
+    )
 
-    train_loader = DataLoader(train_ds, batch_size=16, shuffle=True, num_workers=2, pin_memory=True)
-    val_loader = DataLoader(val_ds, batch_size=16, shuffle=False, num_workers=2, pin_memory=True)
+    train_loader = DataLoader(train_ds, batch_size=32, shuffle=True,
+                              num_workers=2, pin_memory=True)
+    val_loader   = DataLoader(val_ds,   batch_size=32, shuffle=False,
+                              num_workers=2, pin_memory=True)
 
-    model = AudioOnlyDeepGuard().float().to(device)
-    if torch.cuda.device_count() > 1: model = nn.DataParallel(model)
-    target_model = model.module if isinstance(model, nn.DataParallel) else model
+    print(f"📦 Train: {len(train_ds)} | Val: {len(val_ds)}\n")
 
-    # Load Memory from Previous Phase
-    if PREV_MODEL_PATH and os.path.exists(PREV_MODEL_PATH):
-        try:
-            target_model.load_state_dict(torch.load(PREV_MODEL_PATH, map_location=device), strict=False)
-            print(f"✅ Memory Loaded from: {PREV_MODEL_PATH}")
-        except:
-            print("⚠️ Memory loading failed, starting fresh for this phase.")
+    model = AudioClassifier(embed_dim=256, phase=phase).to(device)
 
-    optimizer = optim.AdamW([
-        {'params': target_model.expert.parameters(), 'lr': LR_BACKBONE},
-        {'params': target_model.classifier.parameters(), 'lr': LR_CLASSIFIER}
-    ], weight_decay=0.02)
-    
-    scheduler = CosineAnnealingLR(optimizer, T_max=10)
-    criterion = nn.BCEWithLogitsLoss()
-    scaler = torch.cuda.amp.GradScaler()
-    best_val_f1 = 0.0
-    EPOCHS = 10
+    if checkpoint_path and os.path.exists(checkpoint_path):
+        print(f"⚡ Loading checkpoint: {checkpoint_path}")
+        ckpt = torch.load(checkpoint_path, map_location=device)
+        model.load_state_dict(ckpt["model_state_dict"], strict=False)
 
-    # ==========================================
-    # 🔥 STABLE TRAINING LOOP
-    # ==========================================
-    for epoch in range(EPOCHS):
-        
-        # Protective Warm-up Strategy
-        if epoch < WARMUP_EPOCHS:
-            print(f"\n🥶 Warming up GELU Head...")
-            for name, param in target_model.named_parameters():
-                param.requires_grad = True if "classifier" in name else False
-        else:
-            print(f"\n🔓 Fine-tuning Full Model (Retention Mode)...")
-            for name, param in target_model.named_parameters():
-                if any(f"encoder.layers.{i}" in name for i in range(4, 12)) or "classifier" in name:
-                    param.requires_grad = True
-                else:
-                    param.requires_grad = False
+    optimizer = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=cfg["lr"], weight_decay=1e-4
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=cfg["epochs"], eta_min=1e-7
+    )
 
-        model.train()
-        train_loop = tqdm(train_loader, total=len(train_loader), leave=True)
-        
-        for _, _, _, audio, labels in train_loop:
-            audio = audio.detach().cpu()
-            audio = (audio - audio.mean(dim=-1, keepdim=True)) / (audio.std(dim=-1, keepdim=True) + 1e-8)
-            audio = torch.clamp(audio, -1.0, 1.0)
-            audio = augment_waveform(audio.clone())
-            
-            audio = audio.contiguous().to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True).view(-1, 1)
+    criterion = nn.BCEWithLogitsLoss(
+        pos_weight=torch.tensor([1.5]).to(device)
+    )
 
-            optimizer.zero_grad()
-            with torch.cuda.amp.autocast():
-                preds = model(audio)
-                loss = criterion(preds, labels)
-            
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
-            scaler.step(optimizer)
-            scaler.update()
-            
-            train_loop.set_description(f"Phase {CURRENT_PHASE} | Epoch [{epoch+1}/{EPOCHS}]")
-            train_loop.set_postfix(Loss=f"{loss.item():.4f}")
+    best_auc  = 0.0
+    save_path = f"/kaggle/working/audio_expert_phase{phase}.pth"
 
+    for epoch in range(1, cfg["epochs"] + 1):
+        print(f"Epoch [{epoch}/{cfg['epochs']}]")
+
+        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
+        val_loss, val_acc, val_auc, val_f1, true_labels, pred_labels = validate(model, val_loader, criterion, device)
         scheduler.step()
 
-        # Validation
-        model.eval()
-        all_preds, all_labels = [], []
-        with torch.no_grad():
-            for _, _, _, audio, labels in val_loader:
-                audio = audio.detach().cpu()
-                audio = (audio - audio.mean(dim=-1, keepdim=True)) / (audio.std(dim=-1, keepdim=True) + 1e-8)
-                audio = torch.clamp(audio, -1.0, 1.0).to(device)
-                with torch.cuda.amp.autocast():
-                    outputs = model(audio)
-                preds = (torch.sigmoid(outputs) >= 0.5).float()
-                all_preds.extend(preds.cpu().numpy())
-                all_labels.extend(labels.numpy())
+        print(f"  Train → Loss: {train_loss:.4f}  Acc: {train_acc:.4f}")
+        print(f"  Val   → Loss: {val_loss:.4f}  Acc: {val_acc:.4f}  AUC: {val_auc:.4f}")
 
-        val_f1 = f1_score(all_labels, all_preds)
-        print(f"📊 Validation F1: {val_f1:.4f}")
+        if val_auc > best_auc:
+            best_auc = val_auc
+            torch.save({
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "val_auc": val_auc,
+                "phase": phase,
+            }, save_path)
+            print(f"  ✅ Best model saved → {save_path}\n")
 
-        if val_f1 > best_val_f1:
-            best_val_f1 = val_f1
-            torch.save(target_model.state_dict(), SAVE_PATH)
-            print(f"🌟 Phase {CURRENT_PHASE} Model Updated!")
+    print(f"\nFinal Classification Report (Phase {phase}):")
+    print(classification_report(true_labels, pred_labels, target_names=["REAL", "FAKE"], digits=4))
 
-    print(f"\n✅ Phase {CURRENT_PHASE} Complete! Best F1: {best_val_f1:.4f}")
+    return save_path
+
 
 if __name__ == "__main__":
-    train_audio_model()
+    # Note: Kaggle notebooks don't always support argparse well in cells.
+    # You can set these variables manually or use sys.argv simulation.
+    PHASE_TO_RUN = 1  # 👈 Phase badalney ke liye yahan change karein (1 or 2)
+    
+    ckpt_in = None
+    if PHASE_TO_RUN == 2:
+        if os.path.exists("/kaggle/working/audio_expert_phase1.pth"):
+            ckpt_in = "/kaggle/working/audio_expert_phase1.pth"
+
+    train_phase(phase=PHASE_TO_RUN, checkpoint_path=ckpt_in)
