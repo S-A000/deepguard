@@ -25,7 +25,7 @@ import numpy as np
 from tqdm import tqdm
 
 # Make sure dataset.py is in the same folder as this script in Kaggle working directory
-from dataset import DeepGuardDataset
+from custom_datasets import DeepGuardDataset
 
 
 # ══════════════════════════════════════════════════════════════════════════════
