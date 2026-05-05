@@ -11,9 +11,8 @@ from sklearn.metrics import f1_score
 import numpy as np
 
 warnings.filterwarnings("ignore")
+# P100 GPU ke liye memory optimization
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-# 🚀 POINT 9: Faster Training Stability
 torch.backends.cudnn.benchmark = True 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -26,20 +25,21 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 CURRENT_PHASE = 1  
 
 # ==========================================
-# 🚀 POINT 5: 1D Waveform Augmentation (Time Masking)
+# 🛡️ BULLETPROOF 1D WAVEFORM AUGMENTATION
 # ==========================================
 def augment_waveform(audio):
-    # Sirf 50% chance hai augment hone ka taake data natural bhi rahe
     if torch.rand(1).item() > 0.5:
-        # Time masking (Zeroing out random chunks of audio)
         time_len = audio.shape[-1]
-        t = torch.randint(0, time_len // 10, (1,)).item() # Max 10% mask
-        t0 = torch.randint(0, time_len - t, (1,)).item()
-        audio[:, t0:t0+t] = 0
+        # Sirf tab augment karein jab audio reasonable length ka ho (Crash Prevention)
+        if time_len > 100: 
+            max_t = max(1, time_len // 10)
+            t = torch.randint(1, max_t + 1, (1,)).item()
+            t0 = torch.randint(0, max(1, time_len - t), (1,)).item()
+            audio[..., t0:t0+t] = 0 
     return audio
 
 # ==========================================
-# 🚀 POINT 1: Deeper Classifier with GELU
+# 🧠 DEEPER CLASSIFIER (GELU)
 # ==========================================
 class AudioOnlyDeepGuard(nn.Module):
     def __init__(self, embed_dim=256):
@@ -51,12 +51,10 @@ class AudioOnlyDeepGuard(nn.Module):
             nn.LayerNorm(256),
             nn.GELU(),
             nn.Dropout(0.3),
-
             nn.Linear(256, 128),
             nn.LayerNorm(128),
             nn.GELU(),
             nn.Dropout(0.3),
-
             nn.Linear(128, 1)
         )
 
@@ -66,7 +64,7 @@ class AudioOnlyDeepGuard(nn.Module):
 
 def train_audio_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"\n🎧 V2.0 Enterprise Engine Online! Phase: {CURRENT_PHASE} on {device}")
+    print(f"\n🎧 Single-GPU (P100) V2.0 Engine Online! Phase: {CURRENT_PHASE} on {device}")
 
     if CURRENT_PHASE == 1:
         REAL_DIRS = [
@@ -79,9 +77,9 @@ def train_audio_model():
             "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_parallel_wavegan"
         ]
         
-        # 🚀 POINT 3: Better LRs (Freezing with extra steps fixed)
         LR_BACKBONE, LR_CLASSIFIER = 1e-6, 1e-5 
         
+        # ⚠️ Yahan apni 0.67 wali file ka Asal Path check kar lein
         PREV_MODEL_PATH = "/kaggle/input/datasets/abdullahpy/audioweights/audio_phase1.pth" 
         SAVE_PATH = "/kaggle/working/saved_models/production/audio_phase1_v2.pth"
     else: return
@@ -96,32 +94,31 @@ def train_audio_model():
     real_ds = DeepGuardDataset(real_dirs=valid_real, fake_dirs=[], max_samples=num_fake, mode="audio_only")
     full_dataset = ConcatDataset([real_ds, fake_ds])
     
-    # ==========================================
-    # 🚀 POINT 7: Validation Split (80% Train, 20% Val)
-    # ==========================================
+    # 80/20 Validation Split
     val_size = int(0.2 * len(full_dataset))
     train_size = len(full_dataset) - val_size
     train_ds, val_ds = random_split(full_dataset, [train_size, val_size])
 
     print(f"⚖️ Dataset Split: Train ({train_size}) | Validation ({val_size})")
     
+    # P100 ke liye Batch Size 8 bilkul perfect hai
     train_loader = DataLoader(train_ds, batch_size=8, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_ds, batch_size=8, shuffle=False, num_workers=2)
 
+    # 🚀 DATA-PARALLEL REMOVED (Strictly Single GPU)
     model = AudioOnlyDeepGuard().float().to(device)
-    if torch.cuda.device_count() > 1: model = nn.DataParallel(model)
 
+    # Load Previous Backbone
     if PREV_MODEL_PATH and os.path.exists(PREV_MODEL_PATH):
         try:
-            # 🚀 Point 10 Compatibility: Load expert weights safely if previous model only saved expert
-            target = model.module.expert if isinstance(model, nn.DataParallel) else model.expert
-            target.load_state_dict(torch.load(PREV_MODEL_PATH, map_location=device), strict=False)
+            # Single GPU loading (No .module needed)
+            model.expert.load_state_dict(torch.load(PREV_MODEL_PATH, map_location=device), strict=False)
             print(f"✅ Loaded Previous Backbone from {PREV_MODEL_PATH}")
         except Exception as e:
-            print(f"⚠️ Memory load warning: {e}")
+            print(f"⚠️ Memory load error: {e}")
 
     # ==========================================
-    # 🚀 POINT 2: Mid-Level Unfreezing (Layers 6 to 11)
+    # 🔓 Mid-Level Unfreezing (Layers 6 to 11)
     # ==========================================
     print("🔓 Unfreezing Layers 6 to 11 for Mid-Level deepfake features...")
     for name, param in model.named_parameters():
@@ -130,12 +127,12 @@ def train_audio_model():
         else:
             param.requires_grad = False
 
+    # Optimizer (No .module needed)
     optimizer = optim.AdamW([
-        {'params': model.module.expert.parameters() if isinstance(model, nn.DataParallel) else model.expert.parameters(), 'lr': LR_BACKBONE},
-        {'params': model.module.classifier.parameters() if isinstance(model, nn.DataParallel) else model.classifier.parameters(), 'lr': LR_CLASSIFIER}
+        {'params': model.expert.parameters(), 'lr': LR_BACKBONE},
+        {'params': model.classifier.parameters(), 'lr': LR_CLASSIFIER}
     ], weight_decay=0.01)
 
-    # 🚀 POINT 6: Back to Baseline Loss since data is perfectly balanced
     criterion = nn.BCEWithLogitsLoss()
     os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
 
@@ -144,26 +141,28 @@ def train_audio_model():
     best_val_f1 = 0.0
 
     # ==========================================
-    # 🔥 TRAINING & VALIDATION LOOP
+    # 🔥 TRAINING LOOP
     # ==========================================
     for epoch in range(EPOCHS):
         model.train()
         train_loop = tqdm(train_loader, total=len(train_loader), leave=True)
-        epoch_loss = 0
         
         for batch_idx, (_, _, _, audio, labels) in enumerate(train_loop):
             if torch.isnan(audio).any(): continue
 
             audio, labels = audio.to(device), labels.to(device).view(-1, 1)
             
-            # 🚀 POINT 8: Sample-level Normalization (Crucial Fix)
+            # Sample-level Normalization
             audio = (audio - audio.mean(dim=-1, keepdim=True)) / (audio.std(dim=-1, keepdim=True) + 1e-8)
             audio = torch.clamp(audio, -1.0, 1.0)
 
-            # Apply Augmentation
+            # Bulletproof Augmentation & Contiguous Memory Fix
             audio = augment_waveform(audio)
+            audio = audio.contiguous() # 👈 YEH CRASH SE BACHAYEGA
 
             optimizer.zero_grad()
+            
+            # Forward Pass
             preds = model(audio)
             
             if torch.isnan(preds).any(): continue
@@ -180,7 +179,7 @@ def train_audio_model():
         scheduler.step()
 
         # ==========================================
-        # 🧪 POINT 7: VALIDATION PHASE
+        # 🧪 VALIDATION LOOP
         # ==========================================
         model.eval()
         val_loss = 0
@@ -191,9 +190,10 @@ def train_audio_model():
             for _, _, _, audio, labels in val_loader:
                 audio, labels = audio.to(device), labels.to(device).view(-1, 1)
                 
-                # Sample-level norm (No augmentation in Validation)
+                # Normalization (No augmentation in Validation)
                 audio = (audio - audio.mean(dim=-1, keepdim=True)) / (audio.std(dim=-1, keepdim=True) + 1e-8)
                 audio = torch.clamp(audio, -1.0, 1.0)
+                audio = audio.contiguous()
 
                 outputs = model(audio)
                 loss = criterion(outputs, labels)
@@ -210,11 +210,10 @@ def train_audio_model():
         print(f"📊 Epoch [{epoch+1}/{EPOCHS}] Stats:")
         print(f"   -> Val Loss: {avg_val_loss:.4f} | Val F1: {val_f1:.4f}")
 
-        # Save Best Model Only
+        # Save Full Model State (Expert + Classifier)
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
-            # 🚀 POINT 10: Saving Complete Model State
-            torch.save(model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict(), SAVE_PATH)
+            torch.save(model.state_dict(), SAVE_PATH) # Single GPU save format
             print(f"   🌟 New Best Model Saved! F1: {val_f1:.4f}")
 
     print(f"\n✅ Training Complete! Best Val F1: {best_val_f1:.4f}")
