@@ -65,7 +65,7 @@ def train_audio_model():
     # 🗺️ 4-PHASE DATASET ROUTING (UNCHANGED STRUCTURE)
     # ==========================================
     if CURRENT_PHASE == 1:
-        print("🟢 PHASE 1: WARM-UP (Basic AI Voices)")
+        print("🟢 PHASE 1: WARM-UP (Basic AI Voices) - TRAINING FROM SCRATCH")
         REAL_DIRS = [
             "/kaggle/input/datasets/kambingbersayaphitam/speech-dataset-of-human-and-ai-generated-voices/Real/Real",
             "/kaggle/input/datasets/kynthesis/vctk-corpus/VCTK-Corpus/wav48"
@@ -75,7 +75,8 @@ def train_audio_model():
             "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_melgan",
             "/kaggle/input/datasets/andreadiubaldo/wavefake-test/generated_audio/ljspeech_parallel_wavegan"
         ]
-        LR_BACKBONE, LR_CLASSIFIER = 1e-6, 1e-5
+        # 🚀 ZERO-STATE FIX: Increased LR for training from scratch
+        LR_BACKBONE, LR_CLASSIFIER = 1e-5, 1e-4
         PREV_MODEL_PATH = None
         SAVE_PATH = "/kaggle/working/saved_models/production/audio_phase1.pth"
 
@@ -153,16 +154,10 @@ def train_audio_model():
 
     if PREV_MODEL_PATH and os.path.exists(PREV_MODEL_PATH):
         try:
-            # ✅ UPDATE 5: Loading full model (strict=False handles older 'expert-only' saves gracefully)
             target_model.load_state_dict(torch.load(PREV_MODEL_PATH, map_location=device), strict=False)
             print(f"✅ Memory Loaded from previous phase!")
         except Exception as e:
             print(f"⚠️ Memory load error: {e}")
-
-    # Freeze Backbone CNN layers for stability
-    for name, param in model.named_parameters():
-        if "feature_extractor" in name or "conv" in name:
-            param.requires_grad = False
 
     optimizer = optim.AdamW([
         {'params': target_model.expert.parameters(), 'lr': LR_BACKBONE},
@@ -181,6 +176,23 @@ def train_audio_model():
     # 🔥 STABLE SOTA TRAINING LOOP
     # ==========================================
     for epoch in range(EPOCHS):
+        
+        # 🚀 ZERO-STATE FIX: 2-Epoch Head Warm-Up
+        if epoch < 2:
+            print(f"\n🥶 EPOCH {epoch+1}: WARM-UP PHASE - Freezing Backbone, Training Classifier Only...")
+            for name, param in target_model.named_parameters():
+                if "classifier" in name:
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
+        else:
+            print(f"\n🔓 EPOCH {epoch+1}: WARM-UP COMPLETE - Unfreezing Layers 6 to 11...")
+            for name, param in target_model.named_parameters():
+                if any(f"encoder.layers.{i}" in name for i in range(6, 12)) or "classifier" in name:
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
+
         model.train()
         train_loop = tqdm(train_loader, total=len(train_loader), leave=True)
         
