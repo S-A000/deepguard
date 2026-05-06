@@ -61,7 +61,9 @@ def train_forensics_model():
             "/kaggle/input/datasets/pevogam/ucf101/UCF101/UCF-101",
             "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo"
         ]
-        FAKE_DIRS = ["/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake"]
+        FAKE_DIRS = ["/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake",
+                     "/kaggle/input/datasets/aknirala/dfdc-train-part-18/dfdc_train_part_18",
+                      "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1"]
         LR = 0.00005
         PREV_MODEL_PATH = "/kaggle/working/saved_models/production/forensic_phase1.pth"
         SAVE_PATH = "/kaggle/working/saved_models/production/forensic_phase2.pth"
