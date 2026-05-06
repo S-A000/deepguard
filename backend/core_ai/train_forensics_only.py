@@ -20,7 +20,7 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # ==========================================
 # 🎛️ PHASE CONTROLLER (MASTER SWITCH)
 # ==========================================
-CURRENT_PHASE = 2 
+CURRENT_PHASE = 3 
 
 class ForensicsOnlyDeepGuard(nn.Module):
     def __init__(self, embed_dim=256):
@@ -72,12 +72,12 @@ def train_forensics_model():
         print("🟠 PHASE 3: THE HARD FAKES (Adding DFDC Enterprise Data)")
         REAL_DIRS = [
             "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
-            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real"
+            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real",
+            "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per/train"
         ]
         FAKE_DIRS = [
             "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake",
             "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1",
-            "/kaggle/input/datasets/aknirala/dfdc-train-part-18/dfdc_train_part_18",
             "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake"
         ]
         LR = 0.00001
@@ -109,7 +109,7 @@ def train_forensics_model():
     # ==========================================
     # 🧠 MODEL INITIALIZATION & LOADING
     # ==========================================
-    SAMPLES_PER_CLASS = 1000 
+    SAMPLES_PER_CLASS = 2000 
     real_dataset = DeepGuardDataset(real_dirs=REAL_DIRS, fake_dirs=[], max_samples=SAMPLES_PER_CLASS)
     fake_dataset = DeepGuardDataset(real_dirs=[], fake_dirs=FAKE_DIRS, max_samples=SAMPLES_PER_CLASS)
     
