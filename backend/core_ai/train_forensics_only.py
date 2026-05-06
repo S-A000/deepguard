@@ -20,7 +20,7 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # ==========================================
 # 🎛️ PHASE CONTROLLER (MASTER SWITCH)
 # ==========================================
-CURRENT_PHASE = 3 
+CURRENT_PHASE = 4 
 
 class ForensicsOnlyDeepGuard(nn.Module):
     def __init__(self, embed_dim=256):
@@ -88,11 +88,20 @@ def train_forensics_model():
         print("🔴 PHASE 4: THE FUTURE THREATS (Custom + SoraGenVid Placeholder)")
         REAL_DIRS = [
             "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
-            "/kaggle/input/custom_dataset/real"
+            "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per/train",
+            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real",
+            "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics400_5per/kinetics400_5per/train",
+            "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo",
+            "/kaggle/input/datasets/pevogam/ucf101/UCF101/UCF-101" 
         ]
         FAKE_DIRS = [
             "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake",
-            "/kaggle/input/soragenvid/fake"
+            "/kaggle/input/soragenvid/fake",
+            "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1",
+            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake",
+            "/kaggle/input/datasets/aknirala/dfdc-train-part-18/dfdc_train_part_18",
+            "/kaggle/input/datasets/abdullahpy/ai-generated-video/Fake"
+            
         ]
         LR = 0.00001
         PREV_MODEL_PATH = "/kaggle/working/saved_models/production/forensic_phase3.pth"
@@ -109,12 +118,12 @@ def train_forensics_model():
     # ==========================================
     # 🧠 MODEL INITIALIZATION & LOADING
     # ==========================================
-    SAMPLES_PER_CLASS = 2000 
+    SAMPLES_PER_CLASS = 4000 
     real_dataset = DeepGuardDataset(real_dirs=REAL_DIRS, fake_dirs=[], max_samples=SAMPLES_PER_CLASS)
     fake_dataset = DeepGuardDataset(real_dirs=[], fake_dirs=FAKE_DIRS, max_samples=SAMPLES_PER_CLASS)
     
     balanced_dataset = ConcatDataset([real_dataset, fake_dataset])
-    dataloader = DataLoader(balanced_dataset, batch_size=16, shuffle=True, num_workers=2)
+    dataloader = DataLoader(balanced_dataset, batch_size=16, shuffle=True, num_workers=4)
 
     model = ForensicsOnlyDeepGuard().float().to(device)
     if torch.cuda.device_count() > 1: model = nn.DataParallel(model)
@@ -136,7 +145,7 @@ def train_forensics_model():
     # ==========================================
     # 🔥 TRAINING LOOP
     # ==========================================
-    EPOCHS = 10
+    EPOCHS = 20
     for epoch in range(EPOCHS):
         model.train()
         loop = tqdm(dataloader, total=len(dataloader), leave=True)
