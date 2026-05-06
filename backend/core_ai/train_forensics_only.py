@@ -20,7 +20,7 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # ==========================================
 # 🎛️ PHASE CONTROLLER (MASTER SWITCH)
 # ==========================================
-CURRENT_PHASE = 1  
+CURRENT_PHASE = 2 
 
 class ForensicsOnlyDeepGuard(nn.Module):
     def __init__(self, embed_dim=256):
