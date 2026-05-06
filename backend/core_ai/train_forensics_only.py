@@ -164,7 +164,7 @@ def train_forensics_model():
     scaler = torch.amp.GradScaler('cuda')
 
     # Loop Setup
-    EPOCHS = 20 if CURRENT_PHASE > 2 else 10
+    EPOCHS = 20 if CURRENT_PHASE > 3 else 10
     os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
 
     for epoch in range(EPOCHS):
