@@ -112,17 +112,16 @@ def train_forensics_model():
     fake_dataset = DeepGuardDataset(real_dirs=[], fake_dirs=FAKE_DIRS, max_samples=SAMPLES_PER_CLASS)
     
     balanced_dataset = ConcatDataset([real_dataset, fake_dataset])
-    # Batch size 16 is completely safe for FFT images
     dataloader = DataLoader(balanced_dataset, batch_size=16, shuffle=True, num_workers=2)
 
     model = ForensicsOnlyDeepGuard().float().to(device)
     if torch.cuda.device_count() > 1: model = nn.DataParallel(model)
 
+    # 🛠️ FIXED: Loading the FULL model (Expert + Classifier) instead of just the expert
     if PREV_MODEL_PATH and os.path.exists(PREV_MODEL_PATH):
         try:
-            target = model.module.expert if isinstance(model, nn.DataParallel) else model.expert
-            target.load_state_dict(torch.load(PREV_MODEL_PATH, map_location=device))
-            print(f"✅ Memory Loaded from Phase {CURRENT_PHASE - 1}! Continuing evolution...")
+            model.load_state_dict(torch.load(PREV_MODEL_PATH, map_location=device))
+            print(f"✅ Full Model Memory Loaded from Phase {CURRENT_PHASE - 1}! Evolution continuing...")
         except Exception as e:
             print(f"⚠️ Error loading previous phase memory: {e}")
 
@@ -141,7 +140,6 @@ def train_forensics_model():
         loop = tqdm(dataloader, total=len(dataloader), leave=True)
         
         for batch_idx, (video_rgb, flow, fft, audio, labels) in enumerate(loop):
-            # Sirf FFT ko GPU par bhej rahe hain
             fft = torch.nan_to_num(fft.to(device))
             labels = labels.float().to(device).view(-1, 1)
 
@@ -159,8 +157,10 @@ def train_forensics_model():
             loop.set_description(f"Epoch [{epoch+1}/{EPOCHS}]")
             loop.set_postfix(BCE=f"{loss.item():.4f}")
 
-    torch.save(model.module.expert.state_dict() if isinstance(model, nn.DataParallel) else model.expert.state_dict(), SAVE_PATH)
-    print(f"\n✅ Phase {CURRENT_PHASE} Complete! Model Saved at: {SAVE_PATH}")
+    # 🛠️ FIXED: Saving the FULL model state_dict
+    final_state = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
+    torch.save(final_state, SAVE_PATH)
+    print(f"\n✅ Phase {CURRENT_PHASE} Complete! Full Model Saved at: {SAVE_PATH}")
 
 if __name__ == "__main__":
     train_forensics_model()
