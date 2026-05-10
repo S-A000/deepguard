@@ -24,7 +24,7 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # 🎛️ PHASE CONTROLLER (MASTER SWITCH)
 # ==========================================
 # Set this to 1, 2, 3, or 4 based on your training stage
-CURRENT_PHASE = 2 
+CURRENT_PHASE = 3 
 
 class ForensicsOnlyDeepGuard(nn.Module):
     def __init__(self, embed_dim=256):
@@ -78,13 +78,11 @@ def train_forensics_model():
     elif CURRENT_PHASE == 3:
         print("🟠 PHASE 3: THE HARD FAKES (Enterprise DFDC Integration)")
         REAL_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
             "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real",
             "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per/train",
             "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics400_5per/kinetics400_5per/train"
         ]
         FAKE_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake",
             "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1",
             "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake",
             "/kaggle/input/datasets/aknirala/dfdc-train-part-18/dfdc_train_part_18"
