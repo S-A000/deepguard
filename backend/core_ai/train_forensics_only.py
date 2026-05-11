@@ -65,7 +65,7 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # MASTER PHASE SWITCH
 # ==========================================
 
-CURRENT_PHASE = 3
+CURRENT_PHASE = 4
 
 # ==========================================
 # MODEL
@@ -345,7 +345,8 @@ def train_forensics_model():
             "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
 
             "/kaggle/input/datasets/krishna191919/"
-            "dfdc-part-14/dfdc_equal_split_part_14/real"
+            "dfdc-part-14/dfdc_equal_split_part_14/real",
+            "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo"
         ]
 
         FAKE_DIRS = [
