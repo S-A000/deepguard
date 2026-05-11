@@ -105,7 +105,7 @@ class ForensicsOnlyDeepGuard(nn.Module):
 
 class FocalLoss(nn.Module):
 
-    def __init__(self, alpha=0.80, gamma=2):
+    def __init__(self, alpha=0.60, gamma=2):
 
         super(FocalLoss, self).__init__()
 
@@ -138,7 +138,7 @@ def validate_model(
     model,
     val_loader,
     device,
-    threshold=0.35
+    threshold=0.55
 ):
 
     model.eval()
@@ -445,7 +445,7 @@ def train_forensics_model():
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=64,
+        batch_size=32,
         shuffle=True,
         num_workers=4,
         pin_memory=True,
