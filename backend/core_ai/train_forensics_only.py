@@ -7,6 +7,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import numpy as np
 
 from tqdm import tqdm
 
@@ -21,7 +22,8 @@ from sklearn.metrics import (
 from torch.utils.data import (
     DataLoader,
     ConcatDataset,
-    random_split
+    random_split,
+    WeightedRandomSampler # <-- Imported Sampler
 )
 
 # ==========================================
@@ -440,13 +442,47 @@ def train_forensics_model():
     print(f"🧪 VAL SAMPLES   : {val_size}")
 
     # ==========================================
+    # 🎯 SMART BALANCED SAMPLER (THE FIX)
+    # ==========================================
+    
+    print("\n⚖️ Implementing Strict 50/50 Batch Balancing...")
+    
+    # 1. Create a logical array of all labels in full_dataset
+    # ConcatDataset puts all real (0s) first, then all fake (1s)
+    full_labels = np.concatenate([
+        np.zeros(len(real_dataset)), 
+        np.ones(len(fake_dataset))
+    ])
+    
+    # 2. Extract only the labels for the train split using indices
+    train_labels = full_labels[train_dataset.indices]
+    
+    # 3. Calculate weights instantly
+    class_sample_count = np.array([
+        len(np.where(train_labels == t)[0]) for t in np.unique(train_labels)
+    ])
+    weight = 1. / class_sample_count
+    samples_weight = np.array([weight[int(t)] for t in train_labels])
+    
+    samples_weight = torch.from_numpy(samples_weight)
+    
+    # 4. Initialize the Sampler
+    sampler = WeightedRandomSampler(
+        weights=samples_weight.type('torch.DoubleTensor'),
+        num_samples=len(samples_weight),
+        replacement=True
+    )
+    print("✅ Sampler Ready! Every batch will be perfectly balanced.")
+
+    # ==========================================
     # DATALOADERS
     # ==========================================
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=32,
-        shuffle=True,
+        sampler=sampler, # <-- SAMPLER ADDED HERE
+        # shuffle=True,  <-- REMOVED SHUFFLE (Sampler handles it)
         num_workers=4,
         pin_memory=True,
         persistent_workers=True
@@ -454,7 +490,7 @@ def train_forensics_model():
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=64,
+        batch_size=32,
         shuffle=False,
         num_workers=4,
         pin_memory=True,
