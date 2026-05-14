@@ -1,448 +1,72 @@
-import os
-import sys
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, ConcatDataset
-from tqdm import tqdm
-import warnings
-
-warnings.filterwarnings("ignore")
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-current_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.abspath(os.path.join(current_dir, "../../"))
-sys.path.append(root_dir)
-
-# ==========================================
-# 🧠 IMPORTS
-# ==========================================
-# IMPORTANT:
-# branch_b_physics.py file mein PhysicsExpert aur calculate_physics_penalty
-# dono available hone chahiye.
-from backend.core_ai.models.branch_b_physics import PhysicsExpert, calculate_physics_penalty
-from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
+import torchvision.models as models
 
 
-# ==========================================
-# 🎛️ PHASE CONTROLLER (MASTER SWITCH)
-# ==========================================
-# Phase change karne ke liye sirf ye number change karo:
-# 1 = FaceForensics++ warm-up
-# 2 = Real-world action/background stability
-# 3 = DFDC hard fake training
-# 4 = AI generated future fake training
-CURRENT_PHASE = 1
-
-
-class PhysicsOnlyDeepGuard(nn.Module):
+class PhysicsExpert(nn.Module):
     def __init__(self, embed_dim=256):
-        super(PhysicsOnlyDeepGuard, self).__init__()
+        super(PhysicsExpert, self).__init__()
 
-        self.expert = PhysicsExpert(embed_dim=embed_dim)
+        # ResNet18 for processing High-Fidelity RAFT Optical Flow
+        self.flow_cnn = models.resnet18(pretrained=True)
 
-        self.classifier = nn.Sequential(
-            nn.Linear(embed_dim, 128),
-            nn.LayerNorm(128),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(128, 1)
+        # 2-channel optical flow (u, v) ke liye layer change ki hai
+        self.flow_cnn.conv1 = nn.Conv2d(
+            2,
+            64,
+            kernel_size=7,
+            stride=2,
+            padding=3,
+            bias=False
         )
 
-    def forward(self, flow_frames):
-        features = self.expert(flow_frames)
-        logits = self.classifier(features)
-        return logits
+        self.flow_cnn.fc = nn.Linear(
+            self.flow_cnn.fc.in_features,
+            embed_dim
+        )
+
+    def forward(self, optical_flow):
+        return self.flow_cnn(optical_flow)
 
 
-def clean_existing_dirs(dir_list):
+# 👑 EXPLICIT PINN NOVELTY: Divergence & Acceleration Constraints
+def calculate_physics_penalty(optical_flow, alpha=1.0, beta=1.0):
     """
-    Sirf existing folders keep karega.
-    Agar koi Kaggle path exist nahi karta, woh automatically skip ho jayega.
+    Mathematical Implementation of Physics Constraints on Optical Flow
+
+    optical_flow shape: (batch, 2, H, W)
     """
-    valid_dirs = []
-    for d in dir_list:
-        if os.path.exists(d):
-            valid_dirs.append(d)
-        else:
-            print(f"⚠️ Missing path skipped: {d}")
-    return valid_dirs
 
-
-def train_physics_model():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"\n🌊 Physics-Only PINN System Online! Training on: {device}")
+    u = optical_flow[:, 0, :, :]
+    v = optical_flow[:, 1, :, :]
 
     # ==========================================
-    # 🗺️ 4-PHASE DATASET ROUTING
+    # 1. Continuity Constraint (Divergence-Free Flow ∇·F ≈ 0)
     # ==========================================
+    du_dx = u[:, :, 1:] - u[:, :, :-1]
+    dv_dy = v[:, 1:, :] - v[:, :-1, :]
 
-    if CURRENT_PHASE == 1:
-        print("\n🟢 PHASE 1: WARM-UP PHASE")
-        print("Dataset: FaceForensics++ only")
-        print("Goal: Basic real/fake motion learning using optical flow")
-
-        REAL_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
-        ]
-
-        FAKE_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake",
-        ]
-
-        LR = 1e-4
-        EPOCHS = 10
-        BATCH_SIZE = 8
-        SAMPLES_PER_CLASS = 1000
-
-        # PINN coefficients according to paper-style kinematic loss
-        ALPHA_DIV = 0.1
-        BETA_SMOOTH = 0.1
-        LAMBDA_PINN = 0.01
-
-        PREV_MODEL_PATH = None
-        SAVE_PATH = "/kaggle/working/saved_models/production/physics_phase1.pth"
-
-    elif CURRENT_PHASE == 2:
-        print("\n🟡 PHASE 2: BACKGROUND / NATURAL MOTION STABILITY")
-        print("Datasets: FaceForensics++ + Kinetics + UCF101 + MSRVTT")
-        print("Goal: Reduce false positives on real human/action/background motion")
-
-        REAL_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
-
-            # Kinetics 5%
-            "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics400_5per/kinetics400_5per/train",
-
-            # UCF101
-            "/kaggle/input/datasets/pevogam/ucf101/UCF101/UCF-101",
-
-            # MSRVTT
-            "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo",
-        ]
-
-        FAKE_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake",
-        ]
-
-        LR = 5e-5
-        EPOCHS = 10
-        BATCH_SIZE = 8
-        SAMPLES_PER_CLASS = 1000
-
-        ALPHA_DIV = 0.1
-        BETA_SMOOTH = 0.1
-        LAMBDA_PINN = 0.01
-
-        PREV_MODEL_PATH = "/kaggle/working/saved_models/production/physics_phase1.pth"
-        SAVE_PATH = "/kaggle/working/saved_models/production/physics_phase2.pth"
-
-    elif CURRENT_PHASE == 3:
-        print("\n🟠 PHASE 3: HARD FAKE PHASE")
-        print("Datasets: FaceForensics++ + DFDC part 01 + DFDC part 14 + DFDC part 18")
-        print("Goal: Learn stronger fake motion inconsistencies from DFDC data")
-
-        REAL_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
-
-            # DFDC part 14 real split
-            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real",
-        ]
-
-        FAKE_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake",
-
-            # DFDC part 01
-            "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1",
-
-            # DFDC part 18
-            "/kaggle/input/datasets/aknirala/dfdc-train-part-18/dfdc_train_part_18",
-
-            # DFDC part 14 fake split
-            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake",
-        ]
-
-        LR = 1e-5
-        EPOCHS = 10
-        BATCH_SIZE = 8
-        SAMPLES_PER_CLASS = 1000
-
-        ALPHA_DIV = 0.1
-        BETA_SMOOTH = 0.1
-        LAMBDA_PINN = 0.01
-
-        PREV_MODEL_PATH = "/kaggle/working/saved_models/production/physics_phase2.pth"
-        SAVE_PATH = "/kaggle/working/saved_models/production/physics_phase3.pth"
-
-    elif CURRENT_PHASE == 4:
-        print("\n🔴 PHASE 4: AI-GENERATED FUTURE THREAT PHASE")
-        print("Datasets: FaceForensics++ + real action datasets + AI Generated Video + Raw fake AI")
-        print("Goal: Generalization against modern generative video")
-
-        REAL_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
-
-            # Real action / natural videos
-            "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics400_5per/kinetics400_5per/train",
-            "/kaggle/input/datasets/pevogam/ucf101/UCF101/UCF-101",
-            "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo",
-
-            # DFDC real if available
-            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real",
-        ]
-
-        FAKE_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake",
-
-            # DFDC fake sources
-            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake",
-            "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1",
-            "/kaggle/input/datasets/aknirala/dfdc-train-part-18/dfdc_train_part_18",
-
-            # AI Generated Video
-            # Agar exact path different ho to neeche os.walk wala command run karke replace kar dena
-            "/kaggle/input/ai-generated-video",
-            "/kaggle/input/ai-generated-videos",
-            "/kaggle/input/ai-generated-video-dataset",
-
-            # Raw fake AI
-            "/kaggle/input/raw-fake-ai",
-            "/kaggle/input/raw-fake-ai-video",
-            "/kaggle/input/raw-fake-ai-dataset",
-        ]
-
-        LR = 1e-5
-        EPOCHS = 10
-        BATCH_SIZE = 8
-        SAMPLES_PER_CLASS = 1000
-
-        ALPHA_DIV = 0.1
-        BETA_SMOOTH = 0.1
-        LAMBDA_PINN = 0.01
-
-        PREV_MODEL_PATH = "/kaggle/working/saved_models/production/physics_phase3.pth"
-        SAVE_PATH = "/kaggle/working/saved_models/production/physics_FINAL.pth"
-
-    else:
-        print("❌ Invalid Phase Selected! Use CURRENT_PHASE = 1, 2, 3, or 4")
-        return
+    # Shape matching and calculating L2 Norm of Divergence
+    divergence = torch.abs(du_dx[:, :-1, :] + dv_dy[:, :, :-1])
+    loss_div = torch.mean(divergence ** 2)
 
     # ==========================================
-    # ✅ CHECK ACTIVE DATASET PATHS
+    # 2. Kinematic Smoothness (Acceleration Consistency d²x/dt²)
     # ==========================================
-    REAL_DIRS = clean_existing_dirs(REAL_DIRS)
-    FAKE_DIRS = clean_existing_dirs(FAKE_DIRS)
+    # 2nd-order derivatives (Laplacian Approximation)
+    d2u_dx2 = u[:, :, 2:] - 2 * u[:, :, 1:-1] + u[:, :, :-2]
+    d2u_dy2 = u[:, 2:, :] - 2 * u[:, 1:-1, :] + u[:, :-2, :]
 
-    print("\n✅ Active Dataset Folders")
-    print(f"Real folders: {len(REAL_DIRS)}")
-    for d in REAL_DIRS:
-        print(f"   REAL → {d}")
+    d2v_dx2 = v[:, :, 2:] - 2 * v[:, :, 1:-1] + v[:, :, :-2]
+    d2v_dy2 = v[:, 2:, :] - 2 * v[:, 1:-1, :] + v[:, :-2, :]
 
-    print(f"\nFake folders: {len(FAKE_DIRS)}")
-    for d in FAKE_DIRS:
-        print(f"   FAKE → {d}")
+    # Matching dimensions
+    laplacian_u = d2u_dx2[:, :-2, :] + d2u_dy2[:, :, :-2]
+    laplacian_v = d2v_dx2[:, :-2, :] + d2v_dy2[:, :, :-2]
 
-    if len(REAL_DIRS) == 0:
-        raise RuntimeError("❌ No REAL dataset folder found. Please check Kaggle paths.")
+    loss_smooth = torch.mean(laplacian_u ** 2) + torch.mean(laplacian_v ** 2)
 
-    if len(FAKE_DIRS) == 0:
-        raise RuntimeError("❌ No FAKE dataset folder found. Please check Kaggle paths.")
+    # Final Explicit Physics Penalty
+    total_pinn_loss = (alpha * loss_div) + (beta * loss_smooth)
 
-    print("\n⚙️ Training Config")
-    print(f"Phase          : {CURRENT_PHASE}")
-    print(f"Epochs         : {EPOCHS}")
-    print(f"Batch Size     : {BATCH_SIZE}")
-    print(f"LR             : {LR}")
-    print(f"Samples/Class  : {SAMPLES_PER_CLASS}")
-    print(f"Alpha Div      : {ALPHA_DIV}")
-    print(f"Beta Smooth    : {BETA_SMOOTH}")
-    print(f"Lambda PINN    : {LAMBDA_PINN}")
-    print(f"Save Path      : {SAVE_PATH}")
-
-    # ==========================================
-    # 📦 DATASET LOADING
-    # ==========================================
-    real_dataset = DeepGuardDataset(
-        real_dirs=REAL_DIRS,
-        fake_dirs=[],
-        max_samples=SAMPLES_PER_CLASS
-    )
-
-    fake_dataset = DeepGuardDataset(
-        real_dirs=[],
-        fake_dirs=FAKE_DIRS,
-        max_samples=SAMPLES_PER_CLASS
-    )
-
-    balanced_dataset = ConcatDataset([real_dataset, fake_dataset])
-
-    dataloader = DataLoader(
-        balanced_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        num_workers=2,
-        pin_memory=True if device.type == "cuda" else False,
-        drop_last=True
-    )
-
-    print(f"\n📊 Total Training Samples: {len(balanced_dataset)}")
-    print(f"📊 Total Batches         : {len(dataloader)}")
-
-    # ==========================================
-    # 🧠 MODEL INITIALIZATION
-    # ==========================================
-    model = PhysicsOnlyDeepGuard(embed_dim=256).float().to(device)
-
-    if torch.cuda.device_count() > 1:
-        print(f"🚀 Multi-GPU detected: {torch.cuda.device_count()} GPUs")
-        model = nn.DataParallel(model)
-
-    # ==========================================
-    # 🔁 LOAD PREVIOUS PHASE MEMORY
-    # ==========================================
-    if PREV_MODEL_PATH is not None and os.path.exists(PREV_MODEL_PATH):
-        try:
-            print(f"\n🔁 Loading previous phase model from: {PREV_MODEL_PATH}")
-
-            target_expert = model.module.expert if isinstance(model, nn.DataParallel) else model.expert
-            state_dict = torch.load(PREV_MODEL_PATH, map_location=device)
-
-            target_expert.load_state_dict(state_dict, strict=True)
-
-            print(f"✅ Previous phase memory loaded successfully!")
-
-        except Exception as e:
-            print(f"⚠️ Could not load previous phase model.")
-            print(f"Reason: {e}")
-            print("Training will continue from fresh initialization.")
-
-    else:
-        if PREV_MODEL_PATH is not None:
-            print(f"⚠️ Previous model not found: {PREV_MODEL_PATH}")
-            print("Training will continue from fresh initialization.")
-        else:
-            print("\n🆕 Phase 1 fresh training started.")
-
-    # ==========================================
-    # 🎯 LOSS + OPTIMIZER
-    # ==========================================
-    criterion = nn.BCEWithLogitsLoss()
-
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=LR,
-        weight_decay=1e-4
-    )
-
-    if device.type == "cuda":
-        scaler = torch.amp.GradScaler("cuda", init_scale=128)
-    else:
-        scaler = None
-
-    os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
-
-    # ==========================================
-    # 🔥 TRAINING LOOP WITH PINN LOSS
-    # ==========================================
-    for epoch in range(EPOCHS):
-        model.train()
-
-        epoch_total_loss = 0.0
-        epoch_bce_loss = 0.0
-        epoch_pinn_loss = 0.0
-
-        loop = tqdm(dataloader, total=len(dataloader), leave=True)
-
-        for batch_idx, (video_rgb, flow, fft, audio, labels) in enumerate(loop):
-
-            # Physics branch ko sirf optical flow chahiye
-            flow = flow.to(device, non_blocking=True).float()
-            flow = torch.nan_to_num(flow, nan=0.0, posinf=1.0, neginf=-1.0)
-
-            labels = labels.float().to(device, non_blocking=True).view(-1, 1)
-
-            optimizer.zero_grad(set_to_none=True)
-
-            if device.type == "cuda":
-                with torch.amp.autocast("cuda"):
-                    predictions = model(flow)
-
-                    # 1) Classification loss
-                    bce_loss = criterion(predictions, labels)
-
-                    # 2) PINN / Kinematic physics loss
-                    # calculate_physics_penalty internally:
-                    # L_kinematic = alpha * L_div + beta * L_smooth
-                    pinn_loss = calculate_physics_penalty(
-                        optical_flow=flow,
-                        alpha=ALPHA_DIV,
-                        beta=BETA_SMOOTH
-                    )
-
-                    # 3) Final combined loss
-                    loss = bce_loss + (LAMBDA_PINN * pinn_loss)
-
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-                scaler.step(optimizer)
-                scaler.update()
-
-            else:
-                predictions = model(flow)
-
-                bce_loss = criterion(predictions, labels)
-
-                pinn_loss = calculate_physics_penalty(
-                    optical_flow=flow,
-                    alpha=ALPHA_DIV,
-                    beta=BETA_SMOOTH
-                )
-
-                loss = bce_loss + (LAMBDA_PINN * pinn_loss)
-
-                loss.backward()
-
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-                optimizer.step()
-
-            epoch_total_loss += loss.item()
-            epoch_bce_loss += bce_loss.item()
-            epoch_pinn_loss += pinn_loss.item()
-
-            loop.set_description(f"Phase {CURRENT_PHASE} | Epoch [{epoch + 1}/{EPOCHS}]")
-            loop.set_postfix(
-                BCE=f"{bce_loss.item():.4f}",
-                PINN=f"{pinn_loss.item():.4f}",
-                TOTAL=f"{loss.item():.4f}"
-            )
-
-        avg_total = epoch_total_loss / len(dataloader)
-        avg_bce = epoch_bce_loss / len(dataloader)
-        avg_pinn = epoch_pinn_loss / len(dataloader)
-
-        print("\n" + "=" * 60)
-        print(f"📊 PHASE {CURRENT_PHASE} | EPOCH {epoch + 1}/{EPOCHS} SUMMARY")
-        print("=" * 60)
-        print(f"Classification BCE Loss : {avg_bce:.6f}")
-        print(f"PINN Kinematic Loss     : {avg_pinn:.6f}")
-        print(f"Total Loss              : {avg_total:.6f}")
-        print("=" * 60)
-
-    # ==========================================
-    # 💾 SAVE ONLY PHYSICS EXPERT
-    # ==========================================
-    expert_to_save = model.module.expert if isinstance(model, nn.DataParallel) else model.expert
-
-    torch.save(expert_to_save.state_dict(), SAVE_PATH)
-
-    print("\n✅ Training Complete!")
-    print(f"✅ Phase {CURRENT_PHASE} Physics Expert Saved at:")
-    print(SAVE_PATH)
-
-
-if __name__ == "__main__":
-    train_physics_model()
+    return total_pinn_loss
