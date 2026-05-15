@@ -21,7 +21,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 # ==========================================
 # ✅ KAGGLE / NOTEBOOK SAFE PATH SETUP
 # ==========================================
-PROJECT_ROOT = "/kaggle/working"
+PROJECT_ROOT = "/kaggle/working/deepguard"
 
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
