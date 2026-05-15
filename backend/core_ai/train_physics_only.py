@@ -49,7 +49,7 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # 3 = DFDC hard fake training
 # 4 = AI generated future fake training
 
-CURRENT_PHASE = 3
+CURRENT_PHASE = 4
 
 
 # ==========================================
@@ -318,6 +318,7 @@ def train_physics_model():
             "/kaggle/input/datasets/pevogam/ucf101/UCF101/UCF-101",
             "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo",
             "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real",
+            "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per"
         ]
 
         FAKE_DIRS = [
@@ -325,22 +326,17 @@ def train_physics_model():
             "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake",
             "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1",
             "/kaggle/input/datasets/aknirala/dfdc-train-part-18/dfdc_train_part_18",
+            "/kaggle/input/datasets/abdullahpy/ai-generated-video/Fake",
+            "/kaggle/input/datasets/abdullahpy/raw-fake-ai/Raw_reel"
+            
 
-            # AI Generated Video possible paths
-            "/kaggle/input/ai-generated-video",
-            "/kaggle/input/ai-generated-videos",
-            "/kaggle/input/ai-generated-video-dataset",
-
-            # Raw fake AI possible paths
-            "/kaggle/input/raw-fake-ai",
-            "/kaggle/input/raw-fake-ai-video",
-            "/kaggle/input/raw-fake-ai-dataset",
+            
         ]
 
         LR = 1e-5
         EPOCHS = 10
-        BATCH_SIZE = 8
-        SAMPLES_PER_CLASS = 1000
+        BATCH_SIZE = 16
+        SAMPLES_PER_CLASS = 3000
         NUM_WORKERS = 0
 
         ALPHA_DIV = 0.1
