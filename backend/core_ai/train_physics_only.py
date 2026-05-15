@@ -1,32 +1,37 @@
 # ==========================================
 # 🌊 PHYSICS/PINN BRANCH TRAINING CODE
-# ✅ Updated: Saves FULL model = PhysicsExpert + Classifier
-# ✅ Kaggle/Jupyter safe
-# ✅ Phase-wise dataset routing included
+# ✅ Saves FULL model = PhysicsExpert + Classifier
+# ✅ Saves Expert-only model also
+# ✅ Kaggle / script safe
+# ✅ Phase-wise dataset routing
+# ✅ Corrupt video safe: skips unreadable samples
 # ==========================================
 
 import os
 import sys
+import random
+import warnings
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, ConcatDataset
+from torch.utils.data import DataLoader, ConcatDataset, Dataset
 from tqdm import tqdm
-import warnings
 
 warnings.filterwarnings("ignore")
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
 # ==========================================
-# ✅ KAGGLE / NOTEBOOK SAFE PATH SETUP
+# ✅ KAGGLE / SCRIPT SAFE PATH SETUP
 # ==========================================
 PROJECT_ROOT = "/kaggle/working/deepguard"
 
 if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
+    sys.path.insert(0, PROJECT_ROOT)
 
 print("✅ Project root added:", PROJECT_ROOT)
+print("✅ Current working directory:", os.getcwd())
 
 
 # ==========================================
@@ -45,6 +50,59 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # 4 = AI generated future fake training
 
 CURRENT_PHASE = 2
+
+
+# ==========================================
+# 🛡️ CORRUPT VIDEO SAFE DATASET WRAPPER
+# ==========================================
+class SafeDataset(Dataset):
+    """
+    DeepGuardDataset ke around safety wrapper.
+    Agar koi video corrupt/unreadable ho:
+      - error print karega
+      - next/random sample try karega
+      - training crash nahi hogi
+    """
+
+    def __init__(self, base_dataset, max_retries=20, name="dataset"):
+        self.base_dataset = base_dataset
+        self.max_retries = max_retries
+        self.name = name
+
+    def __len__(self):
+        return len(self.base_dataset)
+
+    def __getitem__(self, idx):
+        dataset_len = len(self.base_dataset)
+
+        for attempt in range(self.max_retries):
+            try:
+                if attempt == 0:
+                    safe_idx = idx
+                else:
+                    safe_idx = random.randint(0, dataset_len - 1)
+
+                sample = self.base_dataset[safe_idx]
+
+                if sample is None:
+                    raise RuntimeError("Dataset returned None sample")
+
+                return sample
+
+            except KeyboardInterrupt:
+                raise
+
+            except Exception as e:
+                print(
+                    f"\n⚠️ Bad sample skipped | {self.name} | "
+                    f"original_idx={idx} | attempt={attempt + 1}/{self.max_retries} | "
+                    f"error={str(e)[:200]}"
+                )
+                continue
+
+        raise RuntimeError(
+            f"❌ Too many corrupt/unreadable samples in {self.name} near index {idx}"
+        )
 
 
 # ==========================================
@@ -91,15 +149,15 @@ def clean_existing_dirs(dir_list):
 def load_previous_phase_model(model, full_model_path, expert_only_path, device):
     """
     Priority:
-    1. Full model checkpoint load karo.
-    2. Agar full model nahi hai, expert-only checkpoint load karo.
-       Is case mein classifier fresh rahega.
+    1. Full model checkpoint load.
+    2. Agar full model nahi hai, expert-only checkpoint load.
+       Expert-only case mein classifier fresh train hoga.
     """
 
     target_model = model.module if isinstance(model, nn.DataParallel) else model
 
     if full_model_path is not None and os.path.exists(full_model_path):
-        print(f"\n🔁 Loading FULL previous phase model:")
+        print("\n🔁 Loading FULL previous phase model:")
         print(full_model_path)
 
         state_dict = torch.load(full_model_path, map_location=device)
@@ -115,7 +173,7 @@ def load_previous_phase_model(model, full_model_path, expert_only_path, device):
         return
 
     if expert_only_path is not None and os.path.exists(expert_only_path):
-        print(f"\n⚠️ Full previous phase model not found.")
+        print("\n⚠️ Full previous phase model not found.")
         print("Loading EXPERT-ONLY previous checkpoint:")
         print(expert_only_path)
 
@@ -166,6 +224,7 @@ def train_physics_model():
         EPOCHS = 10
         BATCH_SIZE = 8
         SAMPLES_PER_CLASS = 1000
+        NUM_WORKERS = 0
 
         ALPHA_DIV = 0.1
         BETA_SMOOTH = 0.1
@@ -179,7 +238,7 @@ def train_physics_model():
 
     elif CURRENT_PHASE == 2:
         print("\n🟡 PHASE 2: BACKGROUND / NATURAL MOTION STABILITY")
-        print("Datasets: FaceForensics++ + Kinetics + UCF101 + MSRVTT")
+        print("Datasets: FaceForensics++ + Kinetics + UCF101 + MSRVTT + DFDC fake")
         print("Goal: Reduce false positives on natural real motion")
 
         REAL_DIRS = [
@@ -191,14 +250,18 @@ def train_physics_model():
 
         FAKE_DIRS = [
             "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake",
-            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake"
-            
+            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake",
+            "/kaggle/input/datasets/abdullahpy/raw-fake-ai/Raw_reel"
         ]
 
         LR = 5e-5
         EPOCHS = 10
         BATCH_SIZE = 16
-        SAMPLES_PER_CLASS = 2000
+        SAMPLES_PER_CLASS = 1500
+
+        # corrupt video debug ke liye safest 0 hai
+        # stable ho jaye to 2 kar sakte ho
+        NUM_WORKERS = 0
 
         ALPHA_DIV = 0.1
         BETA_SMOOTH = 0.1
@@ -231,6 +294,7 @@ def train_physics_model():
         EPOCHS = 10
         BATCH_SIZE = 8
         SAMPLES_PER_CLASS = 1000
+        NUM_WORKERS = 0
 
         ALPHA_DIV = 0.1
         BETA_SMOOTH = 0.1
@@ -276,6 +340,7 @@ def train_physics_model():
         EPOCHS = 10
         BATCH_SIZE = 8
         SAMPLES_PER_CLASS = 1000
+        NUM_WORKERS = 0
 
         ALPHA_DIV = 0.1
         BETA_SMOOTH = 0.1
@@ -318,6 +383,7 @@ def train_physics_model():
     print(f"Batch Size        : {BATCH_SIZE}")
     print(f"Learning Rate     : {LR}")
     print(f"Samples/Class     : {SAMPLES_PER_CLASS}")
+    print(f"Num Workers       : {NUM_WORKERS}")
     print(f"Alpha Div         : {ALPHA_DIV}")
     print(f"Beta Smooth       : {BETA_SMOOTH}")
     print(f"Lambda PINN       : {LAMBDA_PINN}")
@@ -327,16 +393,28 @@ def train_physics_model():
     # ==========================================
     # 📦 DATASET LOADING
     # ==========================================
-    real_dataset = DeepGuardDataset(
+    real_dataset_raw = DeepGuardDataset(
         real_dirs=REAL_DIRS,
         fake_dirs=[],
         max_samples=SAMPLES_PER_CLASS
     )
 
-    fake_dataset = DeepGuardDataset(
+    fake_dataset_raw = DeepGuardDataset(
         real_dirs=[],
         fake_dirs=FAKE_DIRS,
         max_samples=SAMPLES_PER_CLASS
+    )
+
+    real_dataset = SafeDataset(
+        base_dataset=real_dataset_raw,
+        max_retries=20,
+        name="REAL"
+    )
+
+    fake_dataset = SafeDataset(
+        base_dataset=fake_dataset_raw,
+        max_retries=20,
+        name="FAKE"
     )
 
     balanced_dataset = ConcatDataset([real_dataset, fake_dataset])
@@ -345,7 +423,7 @@ def train_physics_model():
         balanced_dataset,
         batch_size=BATCH_SIZE,
         shuffle=True,
-        num_workers=2,
+        num_workers=NUM_WORKERS,
         pin_memory=True if device.type == "cuda" else False,
         drop_last=True
     )
@@ -408,7 +486,8 @@ def train_physics_model():
 
         loop = tqdm(dataloader, total=len(dataloader), leave=True)
 
-        for batch_idx, (video_rgb, flow, fft, audio, labels) in enumerate(loop):
+        for batch_idx, batch in enumerate(loop):
+            video_rgb, flow, fft, audio, labels = batch
 
             flow = flow.to(device, non_blocking=True).float()
             flow = torch.nan_to_num(flow, nan=0.0, posinf=1.0, neginf=-1.0)
@@ -481,18 +560,22 @@ def train_physics_model():
         print(f"Total Loss              : {avg_total:.6f}")
         print("=" * 70)
 
+        # Optional safety checkpoint after each epoch
+        model_to_save = model.module if isinstance(model, nn.DataParallel) else model
+        epoch_ckpt_path = SAVE_FULL_PATH.replace(".pth", f"_epoch{epoch + 1}.pth")
+        torch.save(model_to_save.state_dict(), epoch_ckpt_path)
+        print(f"💾 Epoch checkpoint saved: {epoch_ckpt_path}")
+
     # ==========================================
     # 💾 SAVE FULL MODEL + EXPERT ONLY
     # ==========================================
     model_to_save = model.module if isinstance(model, nn.DataParallel) else model
 
-    # ✅ This is the important one for evaluation
     torch.save(
         model_to_save.state_dict(),
         SAVE_FULL_PATH
     )
 
-    # Optional: expert-only for final multimodal fusion use
     torch.save(
         model_to_save.expert.state_dict(),
         SAVE_EXPERT_PATH
@@ -511,4 +594,5 @@ def train_physics_model():
 # ==========================================
 # ▶️ RUN
 # ==========================================
-train_physics_model()
+if __name__ == "__main__":
+    train_physics_model()
