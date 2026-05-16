@@ -50,7 +50,7 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # 3 = DFDC hard fake training
 # 4 = AI generated future fake training
 
-CURRENT_PHASE = 1
+CURRENT_PHASE = 2
 
 
 # ==========================================
