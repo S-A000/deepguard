@@ -415,7 +415,7 @@ def train_visual_model():
     # ==========================================
     # 🧠 MODEL INITIALIZATION
     # ==========================================
-    model = VisualOnlyDeepGuard(embed_dim=256).to(device)
+    model = VisualOnlyDeepGuard(embed_dim=256).float().to(device)
 
     if torch.cuda.device_count() > 1:
         print(f"\n🚀 Multi-GPU detected: {torch.cuda.device_count()} GPUs")
