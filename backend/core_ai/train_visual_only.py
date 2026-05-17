@@ -50,7 +50,7 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # 3 = DFDC hard fake training
 # 4 = AI generated future fake training
 
-CURRENT_PHASE = 3
+CURRENT_PHASE = 4
 
 
 # ==========================================
@@ -304,6 +304,7 @@ def train_visual_model():
             "/kaggle/input/datasets/pevogam/ucf101/UCF101/UCF-101",
             "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo",
             "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real",
+            "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per"
         ]
 
         FAKE_DIRS = [
@@ -311,6 +312,8 @@ def train_visual_model():
             "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake",
             "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1",
             "/kaggle/input/datasets/aknirala/dfdc-train-part-18/dfdc_train_part_18",
+            "/kaggle/input/datasets/abdullahpy/ai-generated-video/Fake",
+            "/kaggle/input/datasets/abdullahpy/raw-fake-ai/Raw_reel"
 
             # AI Generated Video possible paths
             "/kaggle/input/ai-generated-video",
@@ -325,8 +328,8 @@ def train_visual_model():
 
         LR = 1e-5
         EPOCHS = 10
-        BATCH_SIZE = 2
-        SAMPLES_PER_CLASS = 1000
+        BATCH_SIZE = 4
+        SAMPLES_PER_CLASS = 4000
         NUM_WORKERS = 0
 
         PREV_FULL_MODEL_PATH = "/kaggle/working/saved_models/production/visual_phase3_full.pth"
