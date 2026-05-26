@@ -6,6 +6,7 @@
 # ✅ Kaggle / script safe
 # ✅ Phase-wise dataset routing
 # ✅ Corrupt video safe
+# ✅ Updated: NO epoch-wise checkpoints, only final save
 # ==========================================
 
 import os
@@ -271,7 +272,7 @@ def train_visual_model():
             "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
             "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real",
             "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo",
-            "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per"
+            "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per",
         ]
 
         FAKE_DIRS = [
@@ -304,7 +305,7 @@ def train_visual_model():
             "/kaggle/input/datasets/pevogam/ucf101/UCF101/UCF-101",
             "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo",
             "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real",
-            "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per"
+            "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per",
         ]
 
         FAKE_DIRS = [
@@ -313,7 +314,7 @@ def train_visual_model():
             "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1",
             "/kaggle/input/datasets/aknirala/dfdc-train-part-18/dfdc_train_part_18",
             "/kaggle/input/datasets/abdullahpy/ai-generated-video/Fake",
-            "/kaggle/input/datasets/abdullahpy/raw-fake-ai/Raw_reel"
+            "/kaggle/input/datasets/abdullahpy/raw-fake-ai/Raw_reel",
 
             # AI Generated Video possible paths
             "/kaggle/input/ai-generated-video",
@@ -513,19 +514,8 @@ def train_visual_model():
         print(f"Classification BCE Loss : {avg_bce:.6f}")
         print("=" * 70)
 
-        # Epoch safety checkpoint
-        model_to_save = model.module if isinstance(model, nn.DataParallel) else model
-        epoch_ckpt_path = SAVE_FULL_PATH.replace(".pth", f"_epoch{epoch + 1}.pth")
-
-        torch.save(
-            model_to_save.state_dict(),
-            epoch_ckpt_path
-        )
-
-        print(f"💾 Epoch checkpoint saved: {epoch_ckpt_path}")
-
     # ==========================================
-    # 💾 SAVE FULL MODEL + EXPERT ONLY
+    # 💾 SAVE FINAL FULL MODEL + FINAL EXPERT ONLY
     # ==========================================
     model_to_save = model.module if isinstance(model, nn.DataParallel) else model
 
@@ -544,9 +534,9 @@ def train_visual_model():
     print("\n" + "=" * 70)
     print("✅ Visual Training Complete!")
     print("=" * 70)
-    print("✅ FULL visual model saved at:")
+    print("✅ FINAL full visual model saved at:")
     print(SAVE_FULL_PATH)
-    print("\n✅ Visual expert-only model also saved at:")
+    print("\n✅ FINAL visual expert-only model saved at:")
     print(SAVE_EXPERT_PATH)
     print("=" * 70)
 
