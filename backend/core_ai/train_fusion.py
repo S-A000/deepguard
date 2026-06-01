@@ -3,7 +3,9 @@
 # ✅ Loads 4 expert models
 # ✅ Handles forensic full/expert checkpoint through fusion_net smart loader
 # ✅ Freezes experts initially
+# ✅ Keeps frozen experts in eval mode during fusion training
 # ✅ Trains only fusion attention + fusion classifier
+# ✅ No autocast for stability
 # ✅ Saves final fusion model once at the end
 # ==========================================
 
@@ -70,7 +72,8 @@ DECISION_THRESHOLD = 0.5
 EMBED_DIM = 256
 NUM_HEADS = 8
 
-SAMPLES_PER_CLASS = 500
+# Small first run. Increase later after stable training.
+SAMPLES_PER_CLASS = 250
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -78,12 +81,11 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # ==========================================
 # 📁 EXPERT CHECKPOINT PATHS
 # ==========================================
-# Change these paths only if your Kaggle model folder changes.
-
 VISUAL_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/visual_FINAL_expert.pth"
 PHYSICS_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/physics_FINAL_expert.pth"
 
-# This file name says forensic_FINAL.pth, but smart loader can extract expert.* automatically.
+# This may contain expert.* + classifier.*.
+# fusion_net.py smart loader will extract expert.* automatically.
 FORENSIC_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/forensic_FINAL.pth"
 
 # Audio Phase 2 best checkpoint
@@ -256,6 +258,25 @@ def fix_audio_batch(audio):
 
 
 # ==========================================
+# 🧊 KEEP FROZEN EXPERTS IN EVAL MODE
+# ==========================================
+def set_frozen_experts_eval(model):
+    """
+    Important:
+    model.train() makes all modules train mode.
+    But experts are frozen, so keep them eval mode.
+    Only fusion layers should train.
+    """
+
+    base_model = model.module if isinstance(model, nn.DataParallel) else model
+
+    base_model.visual_expert.eval()
+    base_model.physics_expert.eval()
+    base_model.forensic_expert.eval()
+    base_model.audio_expert.eval()
+
+
+# ==========================================
 # 📊 METRICS
 # ==========================================
 def compute_metrics(y_true, y_prob, threshold=0.5):
@@ -282,8 +303,13 @@ def compute_metrics(y_true, y_prob, threshold=0.5):
 def train_one_epoch(model, loader, optimizer, criterion, device):
     model.train()
 
+    # ✅ Critical fix:
+    # frozen experts must stay in eval mode
+    set_frozen_experts_eval(model)
+
     total_loss = 0.0
     valid_steps = 0
+    skipped_steps = 0
 
     all_labels = []
     all_probs = []
@@ -309,28 +335,25 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
         optimizer.zero_grad(set_to_none=True)
 
-        if device.type == "cuda":
-            with torch.amp.autocast("cuda"):
-                logits = model(
-                    video_frames=video_rgb,
-                    optical_flow=optical_flow,
-                    fft_images=fft_images,
-                    audio_waveforms=audio_waveforms
-                )
+        # ✅ No autocast here for stability
+        logits = model(
+            video_frames=video_rgb,
+            optical_flow=optical_flow,
+            fft_images=fft_images,
+            audio_waveforms=audio_waveforms
+        )
 
-                loss = criterion(logits, labels)
-        else:
-            logits = model(
-                video_frames=video_rgb,
-                optical_flow=optical_flow,
-                fft_images=fft_images,
-                audio_waveforms=audio_waveforms
-            )
+        if torch.isnan(logits).any() or torch.isinf(logits).any():
+            print("⚠️ Logits NaN/Inf detected. Skipping batch.")
+            skipped_steps += 1
+            continue
 
-            loss = criterion(logits, labels)
+        loss = criterion(logits, labels)
 
+        # ✅ Loss check before backward
         if torch.isnan(loss) or torch.isinf(loss):
-            print("⚠️ Invalid loss skipped")
+            print("⚠️ Invalid loss skipped.")
+            skipped_steps += 1
             continue
 
         loss.backward()
@@ -351,11 +374,16 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
         all_probs.extend(probs.tolist())
         all_labels.extend(labs.tolist())
 
-        loop.set_postfix(loss=f"{loss.item():.4f}")
+        loop.set_postfix(
+            loss=f"{loss.item():.4f}",
+            valid=valid_steps,
+            skipped=skipped_steps
+        )
 
     avg_loss = total_loss / max(valid_steps, 1)
 
     if len(all_labels) == 0:
+        print("⚠️ No valid training batches processed in this epoch.")
         return avg_loss, 0.0, 0.0, 0.0, 0.0, 0.0
 
     acc, precision, recall, f1, auc, _ = compute_metrics(
@@ -363,6 +391,9 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
         all_probs,
         threshold=DECISION_THRESHOLD
     )
+
+    print(f"\n✅ Training valid steps : {valid_steps}")
+    print(f"⚠️ Training skipped steps: {skipped_steps}")
 
     return avg_loss, acc, precision, recall, f1, auc
 
@@ -376,6 +407,7 @@ def validate_one_epoch(model, loader, criterion, device):
 
     total_loss = 0.0
     valid_steps = 0
+    skipped_steps = 0
 
     all_labels = []
     all_probs = []
@@ -399,27 +431,23 @@ def validate_one_epoch(model, loader, criterion, device):
         fft_images = torch.nan_to_num(fft_images, nan=0.0, posinf=1.0, neginf=-1.0)
         audio_waveforms = torch.nan_to_num(audio_waveforms, nan=0.0, posinf=1.0, neginf=-1.0)
 
-        if device.type == "cuda":
-            with torch.amp.autocast("cuda"):
-                logits = model(
-                    video_frames=video_rgb,
-                    optical_flow=optical_flow,
-                    fft_images=fft_images,
-                    audio_waveforms=audio_waveforms
-                )
+        # ✅ No autocast here for stability
+        logits = model(
+            video_frames=video_rgb,
+            optical_flow=optical_flow,
+            fft_images=fft_images,
+            audio_waveforms=audio_waveforms
+        )
 
-                loss = criterion(logits, labels)
-        else:
-            logits = model(
-                video_frames=video_rgb,
-                optical_flow=optical_flow,
-                fft_images=fft_images,
-                audio_waveforms=audio_waveforms
-            )
+        if torch.isnan(logits).any() or torch.isinf(logits).any():
+            print("⚠️ Validation logits NaN/Inf detected. Skipping batch.")
+            skipped_steps += 1
+            continue
 
-            loss = criterion(logits, labels)
+        loss = criterion(logits, labels)
 
         if torch.isnan(loss) or torch.isinf(loss):
+            skipped_steps += 1
             continue
 
         total_loss += loss.item()
@@ -431,11 +459,16 @@ def validate_one_epoch(model, loader, criterion, device):
         all_probs.extend(probs.tolist())
         all_labels.extend(labs.tolist())
 
-        loop.set_postfix(loss=f"{loss.item():.4f}")
+        loop.set_postfix(
+            loss=f"{loss.item():.4f}",
+            valid=valid_steps,
+            skipped=skipped_steps
+        )
 
     avg_loss = total_loss / max(valid_steps, 1)
 
     if len(all_labels) == 0:
+        print("⚠️ No valid validation batches processed.")
         return avg_loss, 0.0, 0.0, 0.0, 0.0, 0.0, [], [], []
 
     acc, precision, recall, f1, auc, y_pred = compute_metrics(
@@ -443,6 +476,9 @@ def validate_one_epoch(model, loader, criterion, device):
         all_probs,
         threshold=DECISION_THRESHOLD
     )
+
+    print(f"\n✅ Validation valid steps : {valid_steps}")
+    print(f"⚠️ Validation skipped steps: {skipped_steps}")
 
     return avg_loss, acc, precision, recall, f1, auc, all_labels, all_probs, y_pred
 
