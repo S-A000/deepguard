@@ -1,10 +1,10 @@
 # ==========================================
 # 🔥 DEEPGUARD FUSION TRAINING SCRIPT
-# ✅ Loads 4 trained expert models
+# ✅ Loads 4 expert models
+# ✅ Handles forensic full/expert checkpoint through fusion_net smart loader
 # ✅ Freezes experts initially
 # ✅ Trains only fusion attention + fusion classifier
-# ✅ Uses Visual + Physics + Forensic + Audio embeddings
-# ✅ Saves final fusion model only once at the end
+# ✅ Saves final fusion model once at the end
 # ==========================================
 
 import os
@@ -70,7 +70,7 @@ DECISION_THRESHOLD = 0.5
 EMBED_DIM = 256
 NUM_HEADS = 8
 
-SAMPLES_PER_CLASS = 1000
+SAMPLES_PER_CLASS = 500
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -78,11 +78,15 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # ==========================================
 # 📁 EXPERT CHECKPOINT PATHS
 # ==========================================
+# Change these paths only if your Kaggle model folder changes.
+
 VISUAL_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/visual_FINAL_expert.pth"
 PHYSICS_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/physics_FINAL_expert.pth"
+
+# This file name says forensic_FINAL.pth, but smart loader can extract expert.* automatically.
 FORENSIC_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/forensic_FINAL.pth"
 
-# Audio Phase 2 best tha, isi liye yeh use karna hai
+# Audio Phase 2 best checkpoint
 AUDIO_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/audio_phase2_expert.pth"
 
 
@@ -95,17 +99,14 @@ SAVE_FUSION_BEST_PATH = os.path.join(SAVE_DIR, "fusion_FINAL_best.pth")
 
 
 # ==========================================
-# 📁 DATASET PATHS FOR FUSION TRAINING
+# 📁 DATASET PATHS
 # ==========================================
-# Fusion training ke liye woh datasets use karo jahan RGB, flow, FFT aur audio sab available/usable hon.
-# Audio ke liye kuch videos silent ho sakti hain; SafeDataset unko skip karega.
-
 REAL_DIRS = [
     "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
     "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real",
     "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo",
     "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per/train",
-    "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics400_5per/kinetics400_5per/train"
+    "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics400_5per/kinetics400_5per/train",
 ]
 
 FAKE_DIRS = [
@@ -147,12 +148,11 @@ def clean_existing_dirs(dir_list):
 # ==========================================
 class SafeDataset(Dataset):
     """
-    Fusion ke liye corrupted videos/audio ko skip karega.
-    Important:
-    - video_rgb valid hona chahiye
-    - optical_flow valid hona chahiye
-    - fft valid hona chahiye
-    - audio valid hona chahiye
+    Skips bad fusion samples:
+    - invalid RGB
+    - invalid optical flow
+    - invalid FFT
+    - invalid audio
     """
 
     def __init__(self, base_dataset, max_retries=25, name="dataset"):
@@ -180,36 +180,28 @@ class SafeDataset(Dataset):
 
                 video_rgb, optical_flow, fft_images, audio_waveforms, label = sample
 
-                # ------------------------------
-                # Validate RGB
-                # ------------------------------
+                # RGB check
                 if not isinstance(video_rgb, torch.Tensor) or video_rgb.numel() == 0:
                     raise RuntimeError("Invalid RGB tensor")
 
                 if torch.isnan(video_rgb).any() or torch.isinf(video_rgb).any():
                     raise RuntimeError("RGB has NaN/Inf")
 
-                # ------------------------------
-                # Validate Optical Flow
-                # ------------------------------
+                # Optical flow check
                 if not isinstance(optical_flow, torch.Tensor) or optical_flow.numel() == 0:
                     raise RuntimeError("Invalid optical flow tensor")
 
                 if torch.isnan(optical_flow).any() or torch.isinf(optical_flow).any():
                     raise RuntimeError("Optical flow has NaN/Inf")
 
-                # ------------------------------
-                # Validate FFT
-                # ------------------------------
+                # FFT check
                 if not isinstance(fft_images, torch.Tensor) or fft_images.numel() == 0:
                     raise RuntimeError("Invalid FFT tensor")
 
                 if torch.isnan(fft_images).any() or torch.isinf(fft_images).any():
                     raise RuntimeError("FFT has NaN/Inf")
 
-                # ------------------------------
-                # Validate Audio
-                # ------------------------------
+                # Audio check
                 if not isinstance(audio_waveforms, torch.Tensor) or audio_waveforms.numel() == 0:
                     raise RuntimeError("Invalid audio tensor")
 
@@ -242,7 +234,7 @@ class SafeDataset(Dataset):
 # ==========================================
 def fix_audio_batch(audio):
     """
-    Expected by Wav2Vec:
+    Wav2Vec expected shape:
     (B, L)
 
     Handles:
@@ -327,11 +319,6 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
                 )
 
                 loss = criterion(logits, labels)
-
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-
         else:
             logits = model(
                 video_frames=video_rgb,
@@ -342,13 +329,18 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
             loss = criterion(logits, labels)
 
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-
         if torch.isnan(loss) or torch.isinf(loss):
             print("⚠️ Invalid loss skipped")
             continue
+
+        loss.backward()
+
+        torch.nn.utils.clip_grad_norm_(
+            filter(lambda p: p.requires_grad, model.parameters()),
+            max_norm=1.0
+        )
+
+        optimizer.step()
 
         total_loss += loss.item()
         valid_steps += 1
@@ -417,7 +409,6 @@ def validate_one_epoch(model, loader, criterion, device):
                 )
 
                 loss = criterion(logits, labels)
-
         else:
             logits = model(
                 video_frames=video_rgb,
@@ -473,7 +464,7 @@ def train_fusion_model():
         print("❌ GPU not detected. Training will run on CPU.")
 
     # ==========================================
-    # ✅ Check expert files
+    # Check Expert Files
     # ==========================================
     expert_paths = {
         "Visual": VISUAL_EXPERT_PATH,
@@ -483,6 +474,7 @@ def train_fusion_model():
     }
 
     print("\n🔍 Checking expert checkpoint files")
+
     for name, path in expert_paths.items():
         if os.path.exists(path):
             size_mb = os.path.getsize(path) / (1024 * 1024)
@@ -491,7 +483,7 @@ def train_fusion_model():
             raise FileNotFoundError(f"❌ {name} expert not found: {path}")
 
     # ==========================================
-    # ✅ Check dataset paths
+    # Check Dataset Paths
     # ==========================================
     real_dirs = clean_existing_dirs(REAL_DIRS)
     fake_dirs = clean_existing_dirs(FAKE_DIRS)
@@ -511,7 +503,7 @@ def train_fusion_model():
         raise RuntimeError("❌ No FAKE folders found.")
 
     # ==========================================
-    # 📦 Dataset loading
+    # Dataset Loading
     # ==========================================
     real_dataset_raw = DeepGuardDataset(
         real_dirs=real_dirs,
@@ -541,7 +533,6 @@ def train_fusion_model():
         name="FAKE_FUSION"
     )
 
-    # Class-balanced split
     real_val_size = max(1, int(0.2 * len(real_dataset)))
     real_train_size = len(real_dataset) - real_val_size
 
@@ -590,7 +581,7 @@ def train_fusion_model():
     print(f"Val batches   : {len(val_loader)}")
 
     # ==========================================
-    # 🧠 Model initialize
+    # Model Initialize + Load Experts
     # ==========================================
     model = DeepGuardFusionModel(
         embed_dim=EMBED_DIM,
@@ -612,7 +603,6 @@ def train_fusion_model():
     print("\n✅ Fusion model initialized")
     print("✅ Model device:", next(model.parameters()).device)
 
-    # Trainable params check
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -620,7 +610,7 @@ def train_fusion_model():
     print(f"Trainable params : {trainable_params:,}")
 
     # ==========================================
-    # 🎯 Loss + Optimizer + Scheduler
+    # Loss + Optimizer + Scheduler
     # ==========================================
     criterion = nn.BCEWithLogitsLoss()
 
@@ -639,7 +629,7 @@ def train_fusion_model():
     os.makedirs(SAVE_DIR, exist_ok=True)
 
     # ==========================================
-    # 🔥 Training loop
+    # Training Loop
     # ==========================================
     best_auc = -1.0
     best_f1 = -1.0
@@ -670,7 +660,8 @@ def train_fusion_model():
         scheduler.step()
 
         print("\n📊 Epoch Summary")
-        print("Training")
+
+        print("\nTraining")
         print(f"Loss      : {train_loss:.6f}")
         print(f"Accuracy  : {train_acc:.4f}")
         print(f"Precision : {train_precision:.4f}")
@@ -692,7 +683,6 @@ def train_fusion_model():
         print("Pred REAL count:", np.sum(np.array(y_pred) == 0))
         print("Pred FAKE count:", np.sum(np.array(y_pred) == 1))
 
-        # Save best in memory only
         if (val_auc > best_auc) or (val_auc == best_auc and val_f1 > best_f1):
             best_auc = val_auc
             best_f1 = val_f1
@@ -711,10 +701,13 @@ def train_fusion_model():
                 "val_auc": val_auc,
             }
 
-            print(f"\n✅ New best fusion model in memory | Epoch {epoch} | AUC={val_auc:.4f} | F1={val_f1:.4f}")
+            print(
+                f"\n✅ New best fusion model in memory | "
+                f"Epoch {epoch} | AUC={val_auc:.4f} | F1={val_f1:.4f}"
+            )
 
     # ==========================================
-    # 💾 Save final best fusion model once
+    # Save Final Best Fusion Model Once
     # ==========================================
     if best_state_dict is None:
         raise RuntimeError("❌ No valid fusion model state found.")
