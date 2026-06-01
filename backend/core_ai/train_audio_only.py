@@ -66,7 +66,7 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # 3 = Video-audio domain adaptation
 # 4 = Final video-audio generalization
 
-CURRENT_PHASE = 3
+CURRENT_PHASE = 4
 
 
 # ==========================================
