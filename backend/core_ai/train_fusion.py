@@ -78,12 +78,12 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # ==========================================
 # 📁 EXPERT CHECKPOINT PATHS
 # ==========================================
-VISUAL_EXPERT_PATH = "/kaggle/working/saved_models/production/visual_FINAL_expert.pth"
-PHYSICS_EXPERT_PATH = "/kaggle/working/saved_models/production/physics_FINAL_expert.pth"
-FORENSIC_EXPERT_PATH = "/kaggle/working/saved_models/production/forensic_FINAL_expert.pth"
+VISUAL_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/visual_FINAL_expert.pth"
+PHYSICS_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/physics_FINAL_expert.pth"
+FORENSIC_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/forensic_FINAL.pth"
 
 # Audio Phase 2 best tha, isi liye yeh use karna hai
-AUDIO_EXPERT_PATH = "/kaggle/working/saved_models/production/audio_phase2_expert.pth"
+AUDIO_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/audio_phase2_expert.pth"
 
 
 # ==========================================
@@ -104,6 +104,8 @@ REAL_DIRS = [
     "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
     "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real",
     "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo",
+    "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per/train",
+    "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics400_5per/kinetics400_5per/train"
 ]
 
 FAKE_DIRS = [
