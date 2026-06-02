@@ -73,7 +73,7 @@ EMBED_DIM = 256
 NUM_HEADS = 8
 
 # Small first run. Increase later after stable training.
-SAMPLES_PER_CLASS = 250
+SAMPLES_PER_CLASS = 1000
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
