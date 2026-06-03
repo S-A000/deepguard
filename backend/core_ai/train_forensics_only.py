@@ -598,7 +598,7 @@ def train_forensics_model():
     # TRAINING SETUP
     # ==========================================
 
-    EPOCHS = 20 if CURRENT_PHASE >= 3 else 10
+    EPOCHS = 20 if CURRENT_PHASE >= 4 else 5
 
     best_f1 = 0.0
 
