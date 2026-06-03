@@ -83,7 +83,7 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # MASTER PHASE SWITCH
 # ==========================================
 
-CURRENT_PHASE = 3
+CURRENT_PHASE = 4
 
 # ==========================================
 # MULTI-FRAME FFT CONFIG
