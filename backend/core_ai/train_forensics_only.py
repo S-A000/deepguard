@@ -663,7 +663,7 @@ def train_forensics_model():
         weight_decay=1e-4
     )
 
-    EPOCHS = 20 if CURRENT_PHASE >= 4 else 5
+    EPOCHS = 5 if CURRENT_PHASE >= 4 else 5
 
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
