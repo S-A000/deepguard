@@ -6,6 +6,7 @@
 # ✅ Keeps frozen experts in eval mode during fusion training
 # ✅ Trains only fusion attention + fusion classifier
 # ✅ No autocast for stability
+# ✅ Multi-frame FFT enabled
 # ✅ Saves final fusion model once at the end
 # ==========================================
 
@@ -72,21 +73,37 @@ DECISION_THRESHOLD = 0.5
 EMBED_DIM = 256
 NUM_HEADS = 8
 
-# Small first run. Increase later after stable training.
-SAMPLES_PER_CLASS = 4000
+# Increase after stable training
+SAMPLES_PER_CLASS = 10000
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
+# ==========================================
+# 🔬 MULTI-FRAME FFT CONFIG
+# ==========================================
+# Requires updated multi_modal_loader.py that accepts:
+# fft_mode="multi_avg"
+# fft_num_frames=8
+FFT_MODE = "multi_avg"
+FFT_NUM_FRAMES = 8
 
 
 # ==========================================
 # 📁 EXPERT CHECKPOINT PATHS
 # ==========================================
 VISUAL_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/visual_FINAL_expert.pth"
+
 PHYSICS_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/physics_FINAL_expert.pth"
 
-# This may contain expert.* + classifier.*.
-# fusion_net.py smart loader will extract expert.* automatically.
-FORENSIC_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/forensic_FINAL.pth"
+# IMPORTANT:
+# Use your newly trained multi-frame FFT forensic checkpoint here.
+#
+# If the checkpoint is available in Kaggle working directory, use:
+# FORENSIC_EXPERT_PATH = "/kaggle/working/saved_models/production/forensic_FINAL_multiframe_fft.pth"
+#
+# If you uploaded it as Kaggle model/input dataset, replace this path with the real /kaggle/input/... path.
+FORENSIC_EXPERT_PATH = "/kaggle/working/saved_models/production/forensic_FINAL_multiframe_fft.pth"
 
 # Audio Phase 2 best checkpoint
 AUDIO_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/audio_phase2_expert.pth"
@@ -96,8 +113,8 @@ AUDIO_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default
 # 💾 SAVE PATHS
 # ==========================================
 SAVE_DIR = "/kaggle/working/saved_models/production"
-SAVE_FUSION_FULL_PATH = os.path.join(SAVE_DIR, "fusion_FINAL_full.pth")
-SAVE_FUSION_BEST_PATH = os.path.join(SAVE_DIR, "fusion_FINAL_best.pth")
+SAVE_FUSION_FULL_PATH = os.path.join(SAVE_DIR, "fusion_FINAL_full_multiframe_fft.pth")
+SAVE_FUSION_BEST_PATH = os.path.join(SAVE_DIR, "fusion_FINAL_best_multiframe_fft.pth")
 
 
 # ==========================================
@@ -303,7 +320,7 @@ def compute_metrics(y_true, y_prob, threshold=0.5):
 def train_one_epoch(model, loader, optimizer, criterion, device):
     model.train()
 
-    # ✅ Critical fix:
+    # Critical:
     # frozen experts must stay in eval mode
     set_frozen_experts_eval(model)
 
@@ -335,7 +352,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
         optimizer.zero_grad(set_to_none=True)
 
-        # ✅ No autocast here for stability
+        # No autocast here for stability
         logits = model(
             video_frames=video_rgb,
             optical_flow=optical_flow,
@@ -350,7 +367,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
         loss = criterion(logits, labels)
 
-        # ✅ Loss check before backward
+        # Loss check before backward
         if torch.isnan(loss) or torch.isinf(loss):
             print("⚠️ Invalid loss skipped.")
             skipped_steps += 1
@@ -431,7 +448,7 @@ def validate_one_epoch(model, loader, criterion, device):
         fft_images = torch.nan_to_num(fft_images, nan=0.0, posinf=1.0, neginf=-1.0)
         audio_waveforms = torch.nan_to_num(audio_waveforms, nan=0.0, posinf=1.0, neginf=-1.0)
 
-        # ✅ No autocast here for stability
+        # No autocast here for stability
         logits = model(
             video_frames=video_rgb,
             optical_flow=optical_flow,
@@ -493,6 +510,8 @@ def train_fusion_model():
     print("CUDA available     :", torch.cuda.is_available())
     print("CUDA device count  :", torch.cuda.device_count())
     print("Selected device    :", DEVICE)
+    print("FFT mode           :", FFT_MODE)
+    print("FFT num frames     :", FFT_NUM_FRAMES)
 
     if torch.cuda.is_available():
         print("GPU name           :", torch.cuda.get_device_name(0))
@@ -539,14 +558,16 @@ def train_fusion_model():
         raise RuntimeError("❌ No FAKE folders found.")
 
     # ==========================================
-    # Dataset Loading
+    # Dataset Loading with MULTI-FRAME FFT
     # ==========================================
     real_dataset_raw = DeepGuardDataset(
         real_dirs=real_dirs,
         fake_dirs=[],
         num_frames=16,
         max_samples=SAMPLES_PER_CLASS,
-        mode="multi"
+        mode="multi",
+        fft_mode=FFT_MODE,
+        fft_num_frames=FFT_NUM_FRAMES
     )
 
     fake_dataset_raw = DeepGuardDataset(
@@ -554,7 +575,9 @@ def train_fusion_model():
         fake_dirs=fake_dirs,
         num_frames=16,
         max_samples=SAMPLES_PER_CLASS,
-        mode="multi"
+        mode="multi",
+        fft_mode=FFT_MODE,
+        fft_num_frames=FFT_NUM_FRAMES
     )
 
     real_dataset = SafeDataset(
@@ -758,6 +781,8 @@ def train_fusion_model():
             "physics_expert_path": PHYSICS_EXPERT_PATH,
             "forensic_expert_path": FORENSIC_EXPERT_PATH,
             "audio_expert_path": AUDIO_EXPERT_PATH,
+            "fft_mode": FFT_MODE,
+            "fft_num_frames": FFT_NUM_FRAMES,
             "embed_dim": EMBED_DIM,
             "num_heads": NUM_HEADS,
         },
