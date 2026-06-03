@@ -84,7 +84,7 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # ==========================================
 # MASTER PHASE SWITCH
 # ==========================================
-CURRENT_PHASE = 1
+CURRENT_PHASE = 2
 
 
 # ==========================================
