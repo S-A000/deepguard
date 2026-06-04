@@ -62,7 +62,7 @@ from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 # ==========================================
 SEED = 42
 
-EPOCHS = 10
+EPOCHS = 5
 BATCH_SIZE = 2
 LR = 1e-4
 WEIGHT_DECAY = 1e-4
