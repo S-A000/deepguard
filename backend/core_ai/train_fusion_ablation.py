@@ -101,7 +101,7 @@ PHYSICS_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/defau
 # IMPORTANT:
 # Use your actual multi-frame FFT forensic checkpoint.
 # If this file is in Kaggle working directory:
-FORENSIC_EXPERT_PATH = "/kaggle/working/saved_models/production/forensic_FINAL_multiframe_fft.pth"
+FORENSIC_EXPERT_PATH = "/kaggle/input/models/abdullahpy/final-forensic/pytorch/default/1/forensic_FINAL_multiframe_fft.pth"
 
 # If uploaded as Kaggle model/input, replace above with something like:
 # FORENSIC_EXPERT_PATH = "/kaggle/input/models/abdullahpy/forensic-multiframe/pytorch/default/1/forensic_FINAL_multiframe_fft.pth"
