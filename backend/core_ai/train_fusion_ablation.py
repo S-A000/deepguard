@@ -62,7 +62,7 @@ SEED = 42
 
 # For ablation, 3 epochs usually enough.
 # For final paper run, you can increase to 5.
-EPOCHS = 3
+EPOCHS = 1
 
 # 30GB GPU: 4 is usually safe.
 # If OOM, set 2.
