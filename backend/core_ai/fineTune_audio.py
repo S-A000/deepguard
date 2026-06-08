@@ -1,24 +1,23 @@
-# ==========================================
-# 🔍 DEEPGUARD FORENSIC TRAINING - TPU/XLA VERSION
-# ✅ For Kaggle TPU
-# ✅ No CUDA AMP
-# ✅ No GradScaler
-# ✅ No DataParallel
-# ✅ Uses torch_xla xm.xla_device()
-# ✅ Uses xm.optimizer_step()
-# ==========================================
+# ============================================================
+# 🔍 DEEPGUARD FUSION CROSS-DATASET EVALUATION
+# ✅ Loads final fusion checkpoint
+# ✅ Tests on unseen real/fake folders
+# ✅ Saves metrics, predictions, misclassified videos
+# ✅ Multi-frame FFT enabled
+# ============================================================
 
 import os
 import sys
+import json
+import csv
 import random
 import warnings
-from collections import OrderedDict
+from datetime import datetime
 
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import numpy as np
-
+from torch.utils.data import DataLoader, Dataset, ConcatDataset
 from tqdm import tqdm
 
 from sklearn.metrics import (
@@ -26,718 +25,727 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     f1_score,
-    roc_auc_score
+    roc_auc_score,
+    confusion_matrix,
+    classification_report
 )
 
-from torch.utils.data import (
-    DataLoader,
-    ConcatDataset,
-    random_split,
-    WeightedRandomSampler
-)
-
-# ==========================================
-# TPU / XLA IMPORTS
-# ==========================================
-try:
-    import torch_xla
-    import torch_xla.core.xla_model as xm
-    TPU_AVAILABLE = True
-except Exception as e:
-    TPU_AVAILABLE = False
-    print("⚠️ torch_xla not available. Error:", e)
-
-# ==========================================
-# SYSTEM CONFIG
-# ==========================================
 warnings.filterwarnings("ignore")
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-SEED = 42
 
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
+# ============================================================
+# ✅ PROJECT ROOT SETUP
+# ============================================================
 
-# ==========================================
-# PATH SETUP
-# ==========================================
-current_dir = os.path.dirname(
-    os.path.abspath(__file__)
-) if "__file__" in globals() else os.getcwd()
+PROJECT_ROOT = "/kaggle/working/deepguard"
 
-root_dir = os.path.abspath(
-    os.path.join(current_dir, "../../")
-)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-if root_dir not in sys.path:
-    sys.path.append(root_dir)
-
-print("✅ Root directory added:", root_dir)
+print("✅ Project root added:", PROJECT_ROOT)
 print("✅ Current working directory:", os.getcwd())
 
-# ==========================================
-# IMPORTS
-# ==========================================
-from backend.core_ai.models.branch_c_forensics import ForensicExpert
+
+# ============================================================
+# ✅ IMPORTS FROM YOUR PROJECT
+# ============================================================
+
+from backend.core_ai.models.fusion_net import DeepGuardFusionModel
 from custom_datasets.loaders.multi_modal_loader import DeepGuardDataset
 
-# ==========================================
-# MASTER PHASE SWITCH
-# ==========================================
-CURRENT_PHASE = 1
+
+# ============================================================
+# ⚙️ CONFIG
+# ============================================================
+
+SEED = 42
+BATCH_SIZE = 2          # cross-dataset eval ke liye safe
+NUM_WORKERS = 0
+DECISION_THRESHOLD = 0.5
+
+EMBED_DIM = 256
+NUM_HEADS = 8
+
+FFT_MODE = "multi_avg"
+FFT_NUM_FRAMES = 8
+
+MAX_SAMPLES_PER_CLASS = None
+# None = all videos
+# Example: 1000 = only 1000 real and 1000 fake
+
+DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-# ==========================================
-# DEVICE FUNCTION
-# ==========================================
-def get_device():
+# ============================================================
+# 📌 FINAL FUSION CHECKPOINT PATH
+# ============================================================
+
+FUSION_CHECKPOINT_PATH = "/kaggle/input/models/abdullahpy/fusion-best/pytorch/default/1/fusion_FINAL_best_multiframe_fft.pth"
+
+# Agar best checkpoint issue de, then try:
+# FUSION_CHECKPOINT_PATH = "/kaggle/working/saved_models/production/fusion_FINAL_full_multiframe_fft.pth"
+
+
+# ============================================================
+# 📌 EXPERT CHECKPOINT PATHS
+# Required if checkpoint does not contain full expert weights
+# ============================================================
+
+VISUAL_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/visual_FINAL_expert.pth"
+PHYSICS_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/physics_FINAL_expert.pth"
+FORENSIC_EXPERT_PATH = "/kaggle/input/models/abdullahpy/final-forensic/pytorch/default/1/forensic_FINAL_multiframe_fft.pth"
+AUDIO_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default/1/audio_phase2_expert.pth"
+
+
+# ============================================================
+# 📌 CROSS-DATASET TEST PATHS
+# IMPORTANT:
+# Yahan woh dataset do jo training mein use nahi hua
+# ============================================================
+
+TEST_REAL_DIRS = [
+    # Example:
+    # "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per/train",
+]
+
+TEST_FAKE_DIRS = [
+    # Example:
+    # "/kaggle/input/datasets/abdullahpy/ai-generated-video/Fake",
+]
+
+
+# ============================================================
+# 💾 OUTPUT PATHS
+# ============================================================
+
+OUTPUT_DIR = "/kaggle/working/saved_models/production/crossdataset_eval"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+PREDICTIONS_CSV = os.path.join(OUTPUT_DIR, "crossdataset_predictions.csv")
+MISCLASSIFIED_CSV = os.path.join(OUTPUT_DIR, "crossdataset_misclassified.csv")
+SUMMARY_JSON = os.path.join(OUTPUT_DIR, "crossdataset_summary.json")
+
+
+# ============================================================
+# ✅ SEED
+# ============================================================
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+set_seed(SEED)
+
+
+# ============================================================
+# 🧹 PATH CLEANER
+# ============================================================
+
+def clean_existing_dirs(dir_list):
+    valid_dirs = []
+
+    for d in dir_list:
+        if os.path.exists(d):
+            valid_dirs.append(d)
+        else:
+            print(f"⚠️ Missing path skipped: {d}")
+
+    return valid_dirs
+
+
+# ============================================================
+# 🎧 AUDIO SHAPE FIX
+# ============================================================
+
+def fix_audio_batch(audio):
     """
-    Priority:
-    1. TPU/XLA
-    2. CUDA GPU
-    3. CPU
+    Expected final audio batch shape: (B, samples)
     """
 
-    if TPU_AVAILABLE:
-        device = xm.xla_device()
-        print("✅ TPU/XLA device selected:", device)
-        return device, "tpu"
+    if audio.dim() == 1:
+        audio = audio.unsqueeze(0)
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print("✅ CUDA GPU selected:", device)
-        return device, "cuda"
+    if audio.dim() == 3:
+        audio = audio.mean(dim=1)
 
-    device = torch.device("cpu")
-    print("⚠️ CPU selected:", device)
-    return device, "cpu"
+    if audio.dim() != 2:
+        raise ValueError(f"Invalid audio batch shape: {audio.shape}")
+
+    return audio
 
 
-# ==========================================
-# MODEL
-# ==========================================
-class ForensicsOnlyDeepGuard(nn.Module):
+# ============================================================
+# 🛡️ SAFE DATASET WRAPPER WITH PATH TRACKING
+# ============================================================
 
-    def __init__(self, embed_dim=256):
-        super(ForensicsOnlyDeepGuard, self).__init__()
+class SafeEvalDataset(Dataset):
+    def __init__(self, base_dataset, label_name="DATASET", max_retries=25):
+        self.base_dataset = base_dataset
+        self.label_name = label_name
+        self.max_retries = max_retries
 
-        self.expert = ForensicExpert(
-            embed_dim=embed_dim
+    def __len__(self):
+        return len(self.base_dataset)
+
+    def _extract_path_from_item(self, item):
+        video_exts = (".mp4", ".avi", ".mov", ".mkv", ".webm")
+
+        if isinstance(item, str):
+            return item
+
+        if isinstance(item, dict):
+            for key in ["path", "video_path", "file_path", "filename", "video"]:
+                if key in item and isinstance(item[key], str):
+                    return item[key]
+
+        if isinstance(item, (list, tuple)):
+            for x in item:
+                if isinstance(x, str) and x.lower().endswith(video_exts):
+                    return x
+
+        return None
+
+    def get_sample_path(self, idx):
+        possible_attrs = [
+            "video_paths",
+            "file_paths",
+            "paths",
+            "video_files",
+            "files",
+            "samples",
+            "data",
+            "items",
+            "all_videos",
+            "video_list"
+        ]
+
+        for attr in possible_attrs:
+            if hasattr(self.base_dataset, attr):
+                obj = getattr(self.base_dataset, attr)
+
+                try:
+                    if isinstance(obj, (list, tuple)) and idx < len(obj):
+                        path = self._extract_path_from_item(obj[idx])
+                        if path is not None:
+                            return path
+                except Exception:
+                    pass
+
+        return f"UNKNOWN_PATH | {self.label_name} | idx={idx}"
+
+    def __getitem__(self, idx):
+        dataset_len = len(self.base_dataset)
+
+        for attempt in range(self.max_retries):
+            try:
+                safe_idx = idx if attempt == 0 else random.randint(0, dataset_len - 1)
+
+                sample = self.base_dataset[safe_idx]
+
+                if sample is None:
+                    raise RuntimeError("Dataset returned None")
+
+                video_rgb, optical_flow, fft_images, audio_waveforms, label = sample
+
+                if not isinstance(video_rgb, torch.Tensor) or video_rgb.numel() == 0:
+                    raise RuntimeError("Invalid RGB tensor")
+
+                if not isinstance(optical_flow, torch.Tensor) or optical_flow.numel() == 0:
+                    raise RuntimeError("Invalid optical flow tensor")
+
+                if not isinstance(fft_images, torch.Tensor) or fft_images.numel() == 0:
+                    raise RuntimeError("Invalid FFT tensor")
+
+                if not isinstance(audio_waveforms, torch.Tensor) or audio_waveforms.numel() == 0:
+                    raise RuntimeError("Invalid audio tensor")
+
+                video_rgb = torch.nan_to_num(video_rgb, nan=0.0, posinf=1.0, neginf=-1.0)
+                optical_flow = torch.nan_to_num(optical_flow, nan=0.0, posinf=1.0, neginf=-1.0)
+                fft_images = torch.nan_to_num(fft_images, nan=0.0, posinf=1.0, neginf=-1.0)
+                audio_waveforms = torch.nan_to_num(audio_waveforms, nan=0.0, posinf=1.0, neginf=-1.0)
+
+                video_path = self.get_sample_path(safe_idx)
+
+                return (
+                    video_rgb,
+                    optical_flow,
+                    fft_images,
+                    audio_waveforms,
+                    label,
+                    video_path
+                )
+
+            except KeyboardInterrupt:
+                raise
+
+            except Exception as e:
+                print(
+                    f"\n⚠️ Bad eval sample skipped | {self.label_name} | "
+                    f"idx={idx} | attempt={attempt + 1}/{self.max_retries} | "
+                    f"error={str(e)[:160]}"
+                )
+                continue
+
+        raise RuntimeError(f"❌ Too many corrupt samples in {self.label_name} near index {idx}")
+
+
+# ============================================================
+# 📦 PREPARE CROSS-DATASET LOADER
+# ============================================================
+
+def prepare_crossdataset_loader():
+    real_dirs = clean_existing_dirs(TEST_REAL_DIRS)
+    fake_dirs = clean_existing_dirs(TEST_FAKE_DIRS)
+
+    print("\n✅ CROSS-DATASET REAL folders:")
+    for d in real_dirs:
+        print("REAL →", d)
+
+    print("\n✅ CROSS-DATASET FAKE folders:")
+    for d in fake_dirs:
+        print("FAKE →", d)
+
+    if len(real_dirs) == 0:
+        raise RuntimeError("❌ No cross-dataset REAL folders found.")
+
+    if len(fake_dirs) == 0:
+        raise RuntimeError("❌ No cross-dataset FAKE folders found.")
+
+    real_dataset_raw = DeepGuardDataset(
+        real_dirs=real_dirs,
+        fake_dirs=[],
+        num_frames=16,
+        max_samples=MAX_SAMPLES_PER_CLASS,
+        mode="multi",
+        fft_mode=FFT_MODE,
+        fft_num_frames=FFT_NUM_FRAMES
+    )
+
+    fake_dataset_raw = DeepGuardDataset(
+        real_dirs=[],
+        fake_dirs=fake_dirs,
+        num_frames=16,
+        max_samples=MAX_SAMPLES_PER_CLASS,
+        mode="multi",
+        fft_mode=FFT_MODE,
+        fft_num_frames=FFT_NUM_FRAMES
+    )
+
+    real_dataset = SafeEvalDataset(
+        base_dataset=real_dataset_raw,
+        label_name="CROSS_REAL"
+    )
+
+    fake_dataset = SafeEvalDataset(
+        base_dataset=fake_dataset_raw,
+        label_name="CROSS_FAKE"
+    )
+
+    test_dataset = ConcatDataset([real_dataset, fake_dataset])
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=NUM_WORKERS,
+        pin_memory=True if DEVICE.type == "cuda" else False,
+        drop_last=False
+    )
+
+    print("\n📊 Cross-Dataset Info")
+    print(f"Real total  : {len(real_dataset)}")
+    print(f"Fake total  : {len(fake_dataset)}")
+    print(f"Total test  : {len(test_dataset)}")
+    print(f"Batches     : {len(test_loader)}")
+
+    return test_loader, len(real_dataset), len(fake_dataset)
+
+
+# ============================================================
+# 🧠 CHECKPOINT LOADING HELPERS
+# ============================================================
+
+def remove_module_prefix(state_dict):
+    cleaned = {}
+
+    for k, v in state_dict.items():
+        if k.startswith("module."):
+            cleaned[k.replace("module.", "", 1)] = v
+        else:
+            cleaned[k] = v
+
+    return cleaned
+
+
+def extract_state_dict(checkpoint):
+    """
+    Supports:
+    - direct state_dict
+    - {"model_state_dict": ...}
+    - {"state_dict": ...}
+    - {"fusion_state_dict": ...}
+    - {"model": ...}
+    """
+
+    if isinstance(checkpoint, dict):
+        for key in [
+            "model_state_dict",
+            "state_dict",
+            "fusion_state_dict",
+            "fusion_model_state_dict",
+            "model"
+        ]:
+            if key in checkpoint and isinstance(checkpoint[key], dict):
+                return checkpoint[key]
+
+        # If checkpoint itself looks like state_dict
+        if all(isinstance(k, str) for k in checkpoint.keys()):
+            tensor_values = [v for v in checkpoint.values() if torch.is_tensor(v)]
+            if len(tensor_values) > 0:
+                return checkpoint
+
+    raise RuntimeError("❌ Could not extract model state_dict from checkpoint.")
+
+
+# ============================================================
+# 🧠 LOAD FUSION MODEL
+# ============================================================
+
+def load_fusion_model():
+    print("\n🔧 Building DeepGuardFusionModel")
+
+    model = DeepGuardFusionModel(
+        embed_dim=EMBED_DIM,
+        num_heads=NUM_HEADS,
+        freeze_experts=True
+    )
+
+    # First try to load expert weights if paths exist.
+    # This helps if fusion checkpoint stores only fusion layers.
+    expert_paths_exist = all([
+        os.path.exists(VISUAL_EXPERT_PATH),
+        os.path.exists(PHYSICS_EXPERT_PATH),
+        os.path.exists(FORENSIC_EXPERT_PATH),
+        os.path.exists(AUDIO_EXPERT_PATH),
+    ])
+
+    if expert_paths_exist:
+        print("\n🔁 Loading expert weights before fusion checkpoint")
+        model.load_expert_weights(
+            visual_path=VISUAL_EXPERT_PATH,
+            physics_path=PHYSICS_EXPERT_PATH,
+            forensic_path=FORENSIC_EXPERT_PATH,
+            audio_path=AUDIO_EXPERT_PATH,
+            map_location=DEVICE,
+            strict=True
         )
+    else:
+        print("\n⚠️ Expert paths not all found. Will rely on fusion checkpoint state_dict.")
 
-        self.classifier = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.LayerNorm(256),
-            nn.ReLU(),
-            nn.Dropout(0.4),
+    if not os.path.exists(FUSION_CHECKPOINT_PATH):
+        raise FileNotFoundError(f"❌ Fusion checkpoint not found: {FUSION_CHECKPOINT_PATH}")
 
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Dropout(0.3),
+    print("\n🔁 Loading fusion checkpoint:")
+    print(FUSION_CHECKPOINT_PATH)
 
-            nn.Linear(128, 1)
-        )
+    checkpoint = torch.load(FUSION_CHECKPOINT_PATH, map_location=DEVICE)
+    state_dict = extract_state_dict(checkpoint)
+    state_dict = remove_module_prefix(state_dict)
 
-    def forward(self, fft_images):
-        features = self.expert(fft_images)
-        return self.classifier(features)
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
 
+    print("\n✅ Fusion checkpoint loaded with strict=False")
 
-# ==========================================
-# FOCAL LOSS
-# ==========================================
-class FocalLoss(nn.Module):
+    if len(missing) > 0:
+        print(f"⚠️ Missing keys: {len(missing)}")
+        print(missing[:20])
 
-    def __init__(self, alpha=0.80, gamma=2):
-        super(FocalLoss, self).__init__()
-        self.alpha = alpha
-        self.gamma = gamma
+    if len(unexpected) > 0:
+        print(f"⚠️ Unexpected keys: {len(unexpected)}")
+        print(unexpected[:20])
 
-    def forward(self, inputs, targets):
-        bce_loss = nn.functional.binary_cross_entropy_with_logits(
-            inputs,
-            targets,
-            reduction="none"
-        )
-
-        pt = torch.exp(-bce_loss)
-
-        focal_loss = (
-            self.alpha *
-            ((1 - pt) ** self.gamma) *
-            bce_loss
-        )
-
-        return focal_loss.mean()
-
-
-# ==========================================
-# VALIDATION FUNCTION
-# ==========================================
-def validate_model(
-    model,
-    val_loader,
-    device,
-    device_type,
-    threshold=0.55
-):
-
+    model = model.to(DEVICE)
     model.eval()
 
-    all_probs = []
-    all_labels = []
+    if torch.cuda.device_count() > 1:
+        print(f"🚀 Multi-GPU detected: {torch.cuda.device_count()} GPUs")
+        model = nn.DataParallel(model)
 
-    with torch.no_grad():
-
-        for batch in tqdm(val_loader, desc="Validating", leave=True):
-
-            video_rgb, flow, fft, audio, labels = batch
-
-            fft = torch.nan_to_num(fft).float().to(device)
-            labels = labels.float().view(-1, 1).to(device)
-
-            outputs = model(fft)
-
-            outputs = torch.nan_to_num(
-                outputs,
-                nan=0.0,
-                posinf=10.0,
-                neginf=-10.0
-            )
-
-            probs = torch.sigmoid(outputs)
-
-            all_probs.extend(
-                probs.detach().cpu().numpy().flatten().tolist()
-            )
-
-            all_labels.extend(
-                labels.detach().cpu().numpy().flatten().tolist()
-            )
-
-            if device_type == "tpu":
-                xm.mark_step()
-
-    preds = [
-        1 if p > threshold else 0
-        for p in all_probs
-    ]
-
-    accuracy = accuracy_score(
-        all_labels,
-        preds
-    )
-
-    precision = precision_score(
-        all_labels,
-        preds,
-        zero_division=0
-    )
-
-    recall = recall_score(
-        all_labels,
-        preds,
-        zero_division=0
-    )
-
-    f1 = f1_score(
-        all_labels,
-        preds,
-        zero_division=0
-    )
-
-    try:
-        auc = roc_auc_score(
-            all_labels,
-            all_probs
-        )
-    except Exception:
-        auc = 0.0
-
-    return {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "auc": auc
-    }
-
-
-# ==========================================
-# CHECKPOINT LOADER
-# ==========================================
-def load_checkpoint_safely(model, checkpoint_path, device):
-    if checkpoint_path is None or not os.path.exists(checkpoint_path):
-        print("🆕 No previous checkpoint loaded.")
-        return model
-
-    print("\n📂 Loading previous phase model:")
-    print(checkpoint_path)
-
-    try:
-        state_dict = torch.load(
-            checkpoint_path,
-            map_location="cpu"
-        )
-
-        if isinstance(state_dict, dict) and "model_state_dict" in state_dict:
-            state_dict = state_dict["model_state_dict"]
-
-        new_state_dict = OrderedDict()
-
-        for k, v in state_dict.items():
-            if k.startswith("module."):
-                k = k.replace("module.", "", 1)
-            new_state_dict[k] = v
-
-        model.load_state_dict(new_state_dict, strict=False)
-
-        print("✅ Checkpoint loaded successfully.")
-
-    except Exception as e:
-        print("⚠️ Checkpoint load failed:", e)
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Total params: {total_params:,}")
 
     return model
 
 
-# ==========================================
-# SAVE CHECKPOINT
-# ==========================================
-def save_model(model, save_path, device_type):
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+# ============================================================
+# 🔍 EVALUATION
+# ============================================================
 
-    state_dict = model.state_dict()
+@torch.no_grad()
+def evaluate_crossdataset(model, test_loader):
+    model.eval()
 
-    if device_type == "tpu":
-        xm.save(state_dict, save_path)
-    else:
-        torch.save(state_dict, save_path)
+    all_labels = []
+    all_probs = []
+    all_preds = []
+    all_paths = []
 
+    rows = []
 
-# ==========================================
-# TRAINING FUNCTION
-# ==========================================
-def train_forensics_model():
+    loop = tqdm(test_loader, desc="Cross-Dataset Evaluation", leave=True)
 
-    device, device_type = get_device()
+    for batch_idx, batch in enumerate(loop):
+        try:
+            video_rgb, optical_flow, fft_images, audio_waveforms, labels, paths = batch
 
-    print("\n========================================")
-    print("🔍 DEEPGUARD FORENSICS TRAINING")
-    print("========================================")
-    print(f"📍 CURRENT PHASE : {CURRENT_PHASE}")
-    print(f"⚡ DEVICE TYPE   : {device_type}")
-    print(f"⚡ DEVICE        : {device}")
+            video_rgb = video_rgb.to(DEVICE, non_blocking=True).float()
+            optical_flow = optical_flow.to(DEVICE, non_blocking=True).float()
+            fft_images = fft_images.to(DEVICE, non_blocking=True).float()
 
-    # ==========================================
-    # PHASE DATASET ROUTING
-    # ==========================================
+            audio_waveforms = fix_audio_batch(audio_waveforms)
+            audio_waveforms = audio_waveforms.to(DEVICE, non_blocking=True).float()
 
-    if CURRENT_PHASE == 1:
+            labels = labels.to(DEVICE, non_blocking=True).float().view(-1, 1)
 
-        print("\n🟢 PHASE 1 → FF++ BASE")
+            video_rgb = torch.nan_to_num(video_rgb, nan=0.0, posinf=1.0, neginf=-1.0)
+            optical_flow = torch.nan_to_num(optical_flow, nan=0.0, posinf=1.0, neginf=-1.0)
+            fft_images = torch.nan_to_num(fft_images, nan=0.0, posinf=1.0, neginf=-1.0)
+            audio_waveforms = torch.nan_to_num(audio_waveforms, nan=0.0, posinf=1.0, neginf=-1.0)
 
-        REAL_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real"
-        ]
-
-        FAKE_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake"
-        ]
-
-        LR = 1e-4
-        SAMPLES_PER_CLASS = 1500
-        PREV_MODEL_PATH = None
-
-        SAVE_PATH = (
-            "/kaggle/working/"
-            "saved_models/production/"
-            "forensic_phase1_tpu.pth"
-        )
-
-    elif CURRENT_PHASE == 2:
-
-        print("\n🟡 PHASE 2 → DFDC INTEGRATION")
-
-        REAL_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
-            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real"
-        ]
-
-        FAKE_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake",
-            "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1"
-        ]
-
-        LR = 5e-5
-        SAMPLES_PER_CLASS = 2500
-
-        PREV_MODEL_PATH = (
-            "/kaggle/working/saved_models/"
-            "production/forensic_phase1_tpu.pth"
-        )
-
-        SAVE_PATH = (
-            "/kaggle/working/saved_models/"
-            "production/forensic_phase2_tpu.pth"
-        )
-
-    elif CURRENT_PHASE == 3:
-
-        print("\n🟠 PHASE 3 → HARD FAKES")
-
-        REAL_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
-            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real"
-        ]
-
-        FAKE_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake",
-            "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1",
-            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake",
-            "/kaggle/input/datasets/aknirala/dfdc-train-part-18/dfdc_train_part_18"
-        ]
-
-        LR = 1e-5
-        SAMPLES_PER_CLASS = 3500
-
-        PREV_MODEL_PATH = (
-            "/kaggle/working/saved_models/"
-            "production/forensic_phase2_tpu.pth"
-        )
-
-        SAVE_PATH = (
-            "/kaggle/working/saved_models/"
-            "production/forensic_phase3_tpu.pth"
-        )
-
-    elif CURRENT_PHASE == 4:
-
-        print("\n🔴 PHASE 4 → FUTURE THREATS")
-
-        REAL_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/real",
-            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/real",
-            "/kaggle/input/datasets/abdullahpy/msrvtt/TrainValVideo"
-        ]
-
-        FAKE_DIRS = [
-            "/kaggle/input/datasets/hungle3401/faceforensics/FF++/fake",
-            "/kaggle/input/datasets/zz14423/dfdc-part-01/dfdc_train_part_1",
-            "/kaggle/input/datasets/krishna191919/dfdc-part-14/dfdc_equal_split_part_14/fake",
-            "/kaggle/input/datasets/aknirala/dfdc-train-part-18/dfdc_train_part_18",
-            "/kaggle/input/datasets/abdullahpy/ai-generated-video/Fake"
-        ]
-
-        LR = 1e-5
-        SAMPLES_PER_CLASS = 4500
-
-        PREV_MODEL_PATH = (
-            "/kaggle/working/saved_models/"
-            "production/forensic_phase3_tpu.pth"
-        )
-
-        SAVE_PATH = (
-            "/kaggle/working/saved_models/"
-            "production/forensic_FINAL_tpu.pth"
-        )
-
-    else:
-        raise ValueError("❌ INVALID PHASE")
-
-    # ==========================================
-    # VERIFY PATHS
-    # ==========================================
-
-    REAL_DIRS = [
-        d for d in REAL_DIRS
-        if os.path.exists(d)
-    ]
-
-    FAKE_DIRS = [
-        d for d in FAKE_DIRS
-        if os.path.exists(d)
-    ]
-
-    print(f"\n✅ REAL DATASETS : {len(REAL_DIRS)}")
-    print(f"✅ FAKE DATASETS : {len(FAKE_DIRS)}")
-
-    if len(REAL_DIRS) == 0:
-        raise RuntimeError("❌ No real dataset path found.")
-
-    if len(FAKE_DIRS) == 0:
-        raise RuntimeError("❌ No fake dataset path found.")
-
-    # ==========================================
-    # DATASETS
-    # ==========================================
-
-    real_dataset = DeepGuardDataset(
-        real_dirs=REAL_DIRS,
-        fake_dirs=[],
-        max_samples=SAMPLES_PER_CLASS,
-        mode="multi"
-    )
-
-    fake_dataset = DeepGuardDataset(
-        real_dirs=[],
-        fake_dirs=FAKE_DIRS,
-        max_samples=SAMPLES_PER_CLASS,
-        mode="multi"
-    )
-
-    full_dataset = ConcatDataset([
-        real_dataset,
-        fake_dataset
-    ])
-
-    total_size = len(full_dataset)
-
-    train_size = int(0.9 * total_size)
-    val_size = total_size - train_size
-
-    train_dataset, val_dataset = random_split(
-        full_dataset,
-        [train_size, val_size],
-        generator=torch.Generator().manual_seed(SEED)
-    )
-
-    print(f"\n📦 TOTAL SAMPLES : {total_size}")
-    print(f"🚂 TRAIN SAMPLES : {train_size}")
-    print(f"🧪 VAL SAMPLES   : {val_size}")
-
-    # ==========================================
-    # BALANCED SAMPLER
-    # ==========================================
-
-    print("\n⚖️ Implementing balanced sampler...")
-
-    full_labels = np.concatenate([
-        np.zeros(len(real_dataset)),
-        np.ones(len(fake_dataset))
-    ])
-
-    train_labels = full_labels[train_dataset.indices]
-
-    class_sample_count = np.array([
-        len(np.where(train_labels == t)[0])
-        for t in np.unique(train_labels)
-    ])
-
-    weight = 1.0 / class_sample_count
-    samples_weight = np.array([
-        weight[int(t)]
-        for t in train_labels
-    ])
-
-    samples_weight = torch.from_numpy(samples_weight).double()
-
-    sampler = WeightedRandomSampler(
-        weights=samples_weight,
-        num_samples=len(samples_weight),
-        replacement=True
-    )
-
-    print("✅ Balanced sampler ready.")
-
-    # ==========================================
-    # DATALOADERS
-    # ==========================================
-    # TPU note:
-    # num_workers=0 is safer with OpenCV/librosa/ffmpeg preprocessing.
-    # pin_memory=False because TPU is not CUDA.
-
-    BATCH_SIZE = 32
-    NUM_WORKERS = 0
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=BATCH_SIZE,
-        sampler=sampler,
-        num_workers=NUM_WORKERS,
-        pin_memory=False,
-        drop_last=True
-    )
-
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        pin_memory=False,
-        drop_last=False
-    )
-
-    # ==========================================
-    # MODEL INIT
-    # ==========================================
-
-    model = ForensicsOnlyDeepGuard().float()
-    model = load_checkpoint_safely(
-        model=model,
-        checkpoint_path=PREV_MODEL_PATH,
-        device=device
-    )
-    model = model.to(device)
-
-    print("\n✅ Model moved to:", device)
-
-    # ==========================================
-    # LOSS / OPTIMIZER / SCHEDULER
-    # ==========================================
-
-    criterion = FocalLoss(
-        alpha=0.80,
-        gamma=2
-    )
-
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=LR,
-        weight_decay=1e-4
-    )
-
-    EPOCHS = 5 if CURRENT_PHASE >= 4 else 5
-
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=EPOCHS
-    )
-
-    best_f1 = 0.0
-
-    # ==========================================
-    # TRAIN LOOP
-    # ==========================================
-
-    for epoch in range(EPOCHS):
-
-        model.train()
-
-        running_loss = 0.0
-        valid_steps = 0
-        skipped_steps = 0
-
-        loop = tqdm(
-            train_loader,
-            total=len(train_loader),
-            leave=True
-        )
-
-        for batch_idx, batch in enumerate(loop):
-
-            video_rgb, flow, fft, audio, labels = batch
-
-            fft = torch.nan_to_num(
-                fft,
-                nan=0.0,
-                posinf=1.0,
-                neginf=-1.0
-            ).float().to(device)
-
-            labels = labels.float().view(-1, 1).to(device)
-
-            optimizer.zero_grad(set_to_none=True)
-
-            predictions = model(fft)
-
-            predictions = torch.nan_to_num(
-                predictions,
-                nan=0.0,
-                posinf=10.0,
-                neginf=-10.0
+            logits = model(
+                video_frames=video_rgb,
+                optical_flow=optical_flow,
+                fft_images=fft_images,
+                audio_waveforms=audio_waveforms
             )
 
-            loss = criterion(
-                predictions,
-                labels
-            )
+            probs = torch.sigmoid(logits).detach().cpu().numpy().flatten()
+            labs = labels.detach().cpu().numpy().flatten().astype(int)
+            preds = (probs >= DECISION_THRESHOLD).astype(int)
 
-            if torch.isnan(loss) or torch.isinf(loss):
-                skipped_steps += 1
-                continue
-
-            loss.backward()
-
-            torch.nn.utils.clip_grad_norm_(
-                model.parameters(),
-                max_norm=1.0
-            )
-
-            if device_type == "tpu":
-                xm.optimizer_step(optimizer)
-                xm.mark_step()
+            if isinstance(paths, (list, tuple)):
+                path_list = list(paths)
             else:
-                optimizer.step()
+                path_list = [str(paths)] * len(labs)
 
-            running_loss += loss.item()
-            valid_steps += 1
+            for i in range(len(labs)):
+                true_label = int(labs[i])
+                pred_label = int(preds[i])
+                fake_prob = float(probs[i])
 
-            loop.set_description(
-                f"PH {CURRENT_PHASE} | EP [{epoch+1}/{EPOCHS}]"
-            )
+                rows.append({
+                    "video_path": path_list[i],
+                    "true_label": true_label,
+                    "true_class": "FAKE" if true_label == 1 else "REAL",
+                    "pred_label": pred_label,
+                    "pred_class": "FAKE" if pred_label == 1 else "REAL",
+                    "fake_probability": fake_prob,
+                    "real_probability": 1.0 - fake_prob,
+                    "correct": int(true_label == pred_label),
+                    "error_type": "NONE" if true_label == pred_label else (
+                        "REAL_PREDICTED_AS_FAKE"
+                        if true_label == 0 and pred_label == 1
+                        else "FAKE_PREDICTED_AS_REAL"
+                    )
+                })
+
+            all_labels.extend(labs.tolist())
+            all_probs.extend(probs.tolist())
+            all_preds.extend(preds.tolist())
+            all_paths.extend(path_list)
 
             loop.set_postfix(
-                loss=f"{loss.item():.4f}",
-                valid=valid_steps,
-                skipped=skipped_steps
+                batch=batch_idx,
+                total=len(all_labels)
             )
 
-        scheduler.step()
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                print("⚠️ CUDA OOM during eval. Clearing cache and skipping batch.")
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            else:
+                print(f"⚠️ Runtime eval batch skipped: {str(e)[:160]}")
+            continue
 
-        avg_loss = running_loss / max(valid_steps, 1)
+        except Exception as e:
+            print(f"⚠️ Eval batch skipped: {str(e)[:160]}")
+            continue
 
-        # ==========================================
-        # VALIDATION
-        # ==========================================
-
-        metrics = validate_model(
-            model=model,
-            val_loader=val_loader,
-            device=device,
-            device_type=device_type,
-            threshold=0.35
-        )
-
-        print("\n========================================")
-        print(f"📊 EPOCH {epoch+1} VALIDATION")
-        print("========================================")
-
-        print(f"📉 LOSS      : {avg_loss:.4f}")
-        print(f"✅ ACCURACY  : {metrics['accuracy']:.4f}")
-        print(f"🎯 PRECISION : {metrics['precision']:.4f}")
-        print(f"🎯 RECALL    : {metrics['recall']:.4f}")
-        print(f"🎯 F1 SCORE  : {metrics['f1']:.4f}")
-        print(f"⭐ ROC-AUC   : {metrics['auc']:.4f}")
-        print(f"✅ Valid steps   : {valid_steps}")
-        print(f"⚠️ Skipped steps : {skipped_steps}")
-
-        # ==========================================
-        # SAVE BEST MODEL
-        # ==========================================
-
-        if metrics["f1"] > best_f1:
-
-            best_f1 = metrics["f1"]
-
-            save_model(
-                model=model,
-                save_path=SAVE_PATH,
-                device_type=device_type
-            )
-
-            print("\n🔥 NEW BEST MODEL SAVED!")
-            print(f"📁 PATH    : {SAVE_PATH}")
-            print(f"🏆 BEST F1 : {best_f1:.4f}")
-
-    print("\n========================================")
-    print("✅ TRAINING COMPLETED")
-    print("========================================")
-    print(f"🏆 BEST F1 : {best_f1:.4f}")
-    print(f"📁 MODEL   : {SAVE_PATH}")
+    return all_labels, all_probs, all_preds, rows
 
 
-# ==========================================
-# MAIN
-# ==========================================
+# ============================================================
+# 📊 METRICS + SAVE
+# ============================================================
+
+def compute_and_save_results(y_true, y_prob, y_pred, rows, real_count, fake_count):
+    y_true_np = np.array(y_true).astype(int)
+    y_prob_np = np.array(y_prob)
+    y_pred_np = np.array(y_pred).astype(int)
+
+    acc = accuracy_score(y_true_np, y_pred_np)
+    precision = precision_score(y_true_np, y_pred_np, zero_division=0)
+    recall = recall_score(y_true_np, y_pred_np, zero_division=0)
+    f1 = f1_score(y_true_np, y_pred_np, zero_division=0)
+
+    try:
+        auc = roc_auc_score(y_true_np, y_prob_np)
+    except Exception:
+        auc = 0.0
+
+    cm = confusion_matrix(y_true_np, y_pred_np)
+
+    if cm.shape == (2, 2):
+        tn, fp, fn, tp = cm.ravel()
+    else:
+        tn, fp, fn, tp = 0, 0, 0, 0
+
+    report = classification_report(
+        y_true_np,
+        y_pred_np,
+        target_names=["REAL", "FAKE"],
+        zero_division=0
+    )
+
+    # Save all predictions
+    fieldnames = [
+        "video_path",
+        "true_label",
+        "true_class",
+        "pred_label",
+        "pred_class",
+        "fake_probability",
+        "real_probability",
+        "correct",
+        "error_type"
+    ]
+
+    with open(PREDICTIONS_CSV, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+    # Save misclassified only
+    misclassified = [r for r in rows if r["correct"] == 0]
+
+    with open(MISCLASSIFIED_CSV, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in misclassified:
+            writer.writerow(row)
+
+    summary = {
+        "timestamp": datetime.now().isoformat(),
+        "fusion_checkpoint": FUSION_CHECKPOINT_PATH,
+        "real_count": real_count,
+        "fake_count": fake_count,
+        "total_samples": len(y_true),
+        "threshold": DECISION_THRESHOLD,
+        "accuracy": acc,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "roc_auc": auc,
+        "confusion_matrix": {
+            "tn": int(tn),
+            "fp": int(fp),
+            "fn": int(fn),
+            "tp": int(tp),
+            "matrix": cm.tolist()
+        },
+        "pred_real_count": int(np.sum(y_pred_np == 0)),
+        "pred_fake_count": int(np.sum(y_pred_np == 1)),
+        "predictions_csv": PREDICTIONS_CSV,
+        "misclassified_csv": MISCLASSIFIED_CSV,
+    }
+
+    with open(SUMMARY_JSON, "w") as f:
+        json.dump(summary, f, indent=4)
+
+    print("\n" + "=" * 80)
+    print("✅ CROSS-DATASET EVALUATION COMPLETE")
+    print("=" * 80)
+
+    print("\n📊 Dataset")
+    print(f"Real samples : {real_count}")
+    print(f"Fake samples : {fake_count}")
+    print(f"Total        : {len(y_true)}")
+
+    print("\n📊 Metrics")
+    print(f"Accuracy  : {acc:.4f}")
+    print(f"Precision : {precision:.4f}")
+    print(f"Recall    : {recall:.4f}")
+    print(f"F1        : {f1:.4f}")
+    print(f"ROC-AUC   : {auc:.4f}")
+
+    print("\n🧾 Confusion Matrix")
+    print(cm)
+
+    print("\nClassification Report")
+    print(report)
+
+    print("\nLabel/Prediction Count")
+    print("True REAL count :", np.sum(y_true_np == 0))
+    print("True FAKE count :", np.sum(y_true_np == 1))
+    print("Pred REAL count :", np.sum(y_pred_np == 0))
+    print("Pred FAKE count :", np.sum(y_pred_np == 1))
+
+    print("\n💾 Saved files:")
+    print("Predictions   :", PREDICTIONS_CSV)
+    print("Misclassified :", MISCLASSIFIED_CSV)
+    print("Summary       :", SUMMARY_JSON)
+
+
+# ============================================================
+# 🚀 MAIN
+# ============================================================
+
+def main():
+    print("\n" + "=" * 80)
+    print("🔍 DEEPGUARD CROSS-DATASET FUSION EVALUATION")
+    print("=" * 80)
+
+    print("CUDA available    :", torch.cuda.is_available())
+    print("CUDA device count :", torch.cuda.device_count())
+    print("Selected device   :", DEVICE)
+
+    if torch.cuda.is_available():
+        print("GPU name          :", torch.cuda.get_device_name(0))
+    else:
+        print("❌ GPU not detected. Evaluation will run on CPU.")
+
+    print("Fusion checkpoint :", FUSION_CHECKPOINT_PATH)
+    print("FFT mode          :", FFT_MODE)
+    print("FFT num frames    :", FFT_NUM_FRAMES)
+    print("Batch size        :", BATCH_SIZE)
+
+    test_loader, real_count, fake_count = prepare_crossdataset_loader()
+
+    model = load_fusion_model()
+
+    y_true, y_prob, y_pred, rows = evaluate_crossdataset(
+        model=model,
+        test_loader=test_loader
+    )
+
+    if len(y_true) == 0:
+        raise RuntimeError("❌ No valid samples evaluated.")
+
+    compute_and_save_results(
+        y_true=y_true,
+        y_prob=y_prob,
+        y_pred=y_pred,
+        rows=rows,
+        real_count=real_count,
+        fake_count=fake_count
+    )
+
+
 if __name__ == "__main__":
-    train_forensics_model()
+    main()
