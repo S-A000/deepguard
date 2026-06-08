@@ -106,12 +106,12 @@ AUDIO_EXPERT_PATH = "/kaggle/input/models/abdullahpy/audiophase2/pytorch/default
 
 TEST_REAL_DIRS = [
     # Example:
-    # "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per/train",
+    "/kaggle/input/datasets/rohanmallick/kinetics-train-5per/kinetics600_5per/kinetics600_5per/train",
 ]
 
 TEST_FAKE_DIRS = [
     # Example:
-    # "/kaggle/input/datasets/abdullahpy/ai-generated-video/Fake",
+     "/kaggle/input/datasets/abdullahpy/ai-generated-video/Fake",
 ]
 
 
