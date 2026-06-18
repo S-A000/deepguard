@@ -11,6 +11,9 @@ from app.database import engine
 # Routes import
 from app.api_routes import router as api_router
 
+# ✅ Real AI inference import
+from backend.core_ai.inference_pipeline import analyze_video
+
 app = FastAPI(title="DeepGuard Enterprise API", version="1.0")
 
 # --- DATABASE INITIALIZATION ---
@@ -56,18 +59,12 @@ async def analyze_mobile_video(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, buffer)
     
     try:
-        # 2. Asal Jadoo (Yahan aapka 1GB wala dimaagh chalega)
+        # 2. Asal Jadoo
         print("🧠 DeepGuard AI is scanning the video for threats...")
         
-        # ⚠️ Abhi hum App connection check karne ke liye Dummy Result bhej rahe hain.
-        # Jab App connect ho jayegi, toh hum yahan asal inference() function laga denge.
-        result = {
-            "status": "success",
-            "filename": file.filename,
-            "verdict": "FAKE", 
-            "confidence_score": 98.5,
-            "details": "Unnatural facial movement detected by TimeSformer."
-        }
+        # ✅ Dummy result hata diya — ab real model chalega
+        result = analyze_video(temp_video_path)
+        result["filename"] = file.filename
         
         print("✅ Scan Complete. Sending result to Mobile App.")
         

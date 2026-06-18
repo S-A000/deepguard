@@ -11,9 +11,28 @@ from torch.utils.data import Dataset
 
 class DeepGuardDataset(Dataset):
     # 🚀 FIX: Added 'mode' parameter for ultra-fast conditional loading
-    def __init__(self, real_dirs, fake_dirs, num_frames=16, max_samples=None, mode="multi"):
+    def __init__(
+        self,
+        real_dirs,
+        fake_dirs,
+        num_frames=16,
+        max_samples=None,
+        mode="multi",
+        fft_mode="multi_avg",
+        fft_num_frames=8
+    ):
         self.num_frames = num_frames
         self.mode = mode
+
+        # ==========================================
+        # FFT SETTINGS
+        # ==========================================
+        # fft_mode options:
+        #   "single_center" = old behavior, center frame only
+        #   "multi_avg"     = recommended, multiple frames FFT averaged
+        self.fft_mode = fft_mode
+        self.fft_num_frames = fft_num_frames
+
         self.video_paths = []
         self.labels = []
 
@@ -57,7 +76,10 @@ class DeepGuardDataset(Dataset):
             self.video_paths.append(vid)
             self.labels.append(1.0)  # FAKE
 
-        print(f"📦 Total Enterprise Dataset Loaded: {len(self.video_paths)} Files (Mode: {self.mode})")
+        print(
+            f"📦 Total Enterprise Dataset Loaded: {len(self.video_paths)} Files "
+            f"(Mode: {self.mode}, FFT: {self.fft_mode}, FFT Frames: {self.fft_num_frames})"
+        )
 
     def __len__(self):
         return len(self.video_paths)
@@ -105,16 +127,112 @@ class DeepGuardDataset(Dataset):
 
         return torch.tensor(flow).permute(2, 0, 1).float()
 
-    def extract_fft(self, frames_np):
-        gray = cv2.cvtColor(frames_np[self.num_frames // 2], cv2.COLOR_RGB2GRAY)
+    def _single_frame_fft(self, frame_rgb):
+        """
+        Single frame FFT helper.
+        Input:
+            frame_rgb: RGB frame, shape (224, 224, 3)
+
+        Output:
+            magnitude spectrum, shape (224, 224)
+        """
+
+        gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
+
+        gray = gray.astype(np.float32)
 
         f_transform = np.fft.fft2(gray)
         f_shift = np.fft.fftshift(f_transform)
 
         magnitude_spectrum = 20 * np.log(np.abs(f_shift) + 1e-8)
-        magnitude_spectrum = magnitude_spectrum / (np.max(magnitude_spectrum) + 1e-8)
 
-        return torch.tensor(magnitude_spectrum).unsqueeze(0).float()
+        max_val = np.max(magnitude_spectrum)
+
+        if max_val < 1e-8:
+            max_val = 1.0
+
+        magnitude_spectrum = magnitude_spectrum / (max_val + 1e-8)
+
+        magnitude_spectrum = np.nan_to_num(
+            magnitude_spectrum,
+            nan=0.0,
+            posinf=1.0,
+            neginf=0.0
+        )
+
+        magnitude_spectrum = np.clip(magnitude_spectrum, 0.0, 1.0)
+
+        return magnitude_spectrum.astype(np.float32)
+
+    def extract_fft(self, frames_np):
+        """
+        Updated FFT extractor.
+
+        Old behavior:
+            Center frame only.
+
+        New recommended behavior:
+            Multi-frame FFT average.
+
+        Output shape:
+            torch.Tensor: (1, 224, 224)
+
+        This keeps the ForensicExpert architecture compatible because
+        the output channel remains 1.
+        """
+
+        if frames_np is None or len(frames_np) == 0:
+            return torch.zeros((1, 224, 224), dtype=torch.float32)
+
+        total_frames = len(frames_np)
+
+        # ==========================================
+        # Mode 1: old single-center FFT
+        # ==========================================
+        if self.fft_mode == "single_center":
+            center_idx = total_frames // 2
+            fft_map = self._single_frame_fft(frames_np[center_idx])
+            return torch.tensor(fft_map).unsqueeze(0).float()
+
+        # ==========================================
+        # Mode 2: multi-frame averaged FFT
+        # ==========================================
+        elif self.fft_mode == "multi_avg":
+            k = min(self.fft_num_frames, total_frames)
+
+            # Uniform frame indices across clip
+            indices = np.linspace(0, total_frames - 1, k).astype(int)
+
+            fft_maps = []
+
+            for idx in indices:
+                try:
+                    fft_map = self._single_frame_fft(frames_np[idx])
+                    fft_maps.append(fft_map)
+                except Exception:
+                    continue
+
+            if len(fft_maps) == 0:
+                return torch.zeros((1, 224, 224), dtype=torch.float32)
+
+            avg_fft = np.mean(np.stack(fft_maps, axis=0), axis=0)
+
+            avg_fft = np.nan_to_num(
+                avg_fft,
+                nan=0.0,
+                posinf=1.0,
+                neginf=0.0
+            )
+
+            avg_fft = np.clip(avg_fft, 0.0, 1.0)
+
+            return torch.tensor(avg_fft, dtype=torch.float32).unsqueeze(0)
+
+        else:
+            raise ValueError(
+                f"Invalid fft_mode: {self.fft_mode}. "
+                "Use 'single_center' or 'multi_avg'."
+            )
 
     def extract_audio(self, file_path):
         """
